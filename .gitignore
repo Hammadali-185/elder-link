@@ -1,0 +1,33 @@
+# Environment and secrets
+.env
+*.env.local
+
+# Dependencies
+node_modules/
+
+# Build and cache
+mobile/build/
+mobile/.dart_tool/
+mobile/.flutter-plugins-dependencies
+mobile/android/.gradle/
+mobile/android/.kotlin/
+mobile/android/build/
+watch/build/
+watch/.dart_tool/
+watch/.flutter-plugins-dependencies
+
+# IDE
+.idea/
+.vscode/
+*.iml
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+npm-debug.log*
+
+# Release output (APKs are built, not committed)
+# release/
