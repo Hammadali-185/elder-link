@@ -1,27 +1,7 @@
 const express = require("express");
 const mongoose = require("mongoose");
 const cors = require("cors");
-const dns = require("dns").promises;
 require("dotenv").config();
-
-// ----- DIAGNOSTIC SNIPPET (remove after debugging) -----
-(async () => {
-  const uri = process.env.MONGO_URI || "";
-  const match = uri.match(/@([^/?#]+)/);
-  const host = match ? match[1] : "(could not parse host)";
-  const srvHost = "_mongodb._tcp." + host;
-  console.log("[DIAG] MONGO_URI present:", !!uri);
-  console.log("[DIAG] Host from URI:", host);
-  console.log("[DIAG] SRV hostname to resolve:", srvHost);
-  try {
-    const srv = await dns.resolveSrv(srvHost);
-    console.log("[DIAG] DNS SRV lookup OK. Records:", srv.length, srv);
-  } catch (dnsErr) {
-    console.error("[DIAG] DNS SRV lookup FAILED:", dnsErr.code || dnsErr.message);
-    console.error("[DIAG] Full DNS error:", dnsErr);
-  }
-})();
-// ----- END DIAGNOSTIC -----
 
 const app = express();
 app.use(cors());
