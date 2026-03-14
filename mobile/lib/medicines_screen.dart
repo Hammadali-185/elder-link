@@ -497,6 +497,7 @@ class _MedicinesScreenState extends State<MedicinesScreen> {
         ],
       ),
       floatingActionButton: FloatingActionButton(
+        heroTag: 'fab_medicines',
         onPressed: _showAddMedicineDialog,
         backgroundColor: deepMint,
         child: const Icon(Icons.add, color: Colors.white),

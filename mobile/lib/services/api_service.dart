@@ -3,10 +3,9 @@ import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 
 class ApiService {
-  // Backend API base URL - update this to match your server IP
-  // For local development: http://192.168.100.112:5000/api
-  // For production: replace with your actual server URL
-  static const String baseUrl = 'http://192.168.100.112:5000/api';
+  // Backend API base URL - update this to match your server
+  // Same PC: http://127.0.0.1:5000/api  |  Other device: http://BACKEND_PC_IP:5000/api
+  static const String baseUrl = 'http://127.0.0.1:5000/api';
 
   // Fetch all readings
   static Future<List<Reading>> getAllReadings() async {

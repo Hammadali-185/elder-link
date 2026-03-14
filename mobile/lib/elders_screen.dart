@@ -585,6 +585,7 @@ class _EldersScreenState extends State<EldersScreen> {
                   ),
                 ),
       floatingActionButton: FloatingActionButton(
+        heroTag: 'fab_elders',
         onPressed: _showAddElderDialog,
         backgroundColor: const Color(0xFF17A2A2),
         child: const Icon(Icons.add, color: Colors.white),
