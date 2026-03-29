@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import 'staff_login_screen.dart';
+import 'select_staff_account_screen.dart';
 import 'elder_home_screen.dart';
 import 'admin/admin_login_screen.dart';
 
@@ -132,7 +132,8 @@ class JoinScreen extends StatelessWidget {
                               onTap: () {
                                 Navigator.of(context).push(
                                   MaterialPageRoute(
-                                    builder: (_) => const StaffLoginScreen(),
+                                    builder: (_) =>
+                                        const SelectStaffAccountScreen(),
                                   ),
                                 );
                               },

@@ -89,34 +89,6 @@ class _PanicButtonScreenState extends State<PanicButtonScreen> {
       ),
       child: Stack(
         children: [
-          // Back button top-most (matching other screens)
-          Positioned(
-            top: 28,
-            left: 28,
-            child: Material(
-              color: Colors.transparent,
-              child: InkWell(
-                onTap: widget.onBackTap,
-                borderRadius: BorderRadius.circular(25),
-                splashColor: Colors.white.withOpacity(0.3),
-                highlightColor: Colors.white.withOpacity(0.2),
-                child: Container(
-                  padding: const EdgeInsets.all(10),
-                  decoration: BoxDecoration(
-                    color: Colors.black.withOpacity(0.45),
-                    shape: BoxShape.circle,
-                    border: Border.all(color: Colors.white.withOpacity(0.85), width: 1.5),
-                  ),
-                  child: const Icon(
-                    Icons.arrow_back_ios,
-                    color: Colors.white,
-                    size: 22,
-                  ),
-                ),
-              ),
-            ),
-          ),
-          // Main content
           Center(
             child: Column(
               mainAxisAlignment: MainAxisAlignment.center,
@@ -209,6 +181,32 @@ class _PanicButtonScreenState extends State<PanicButtonScreen> {
                     ],
                   ),
               ],
+            ),
+          ),
+          Positioned(
+            top: 28,
+            left: 28,
+            child: Material(
+              color: Colors.transparent,
+              child: InkWell(
+                onTap: widget.onBackTap,
+                borderRadius: BorderRadius.circular(25),
+                splashColor: Colors.white.withOpacity(0.3),
+                highlightColor: Colors.white.withOpacity(0.2),
+                child: Container(
+                  padding: const EdgeInsets.all(10),
+                  decoration: BoxDecoration(
+                    color: Colors.black.withOpacity(0.45),
+                    shape: BoxShape.circle,
+                    border: Border.all(color: Colors.white.withOpacity(0.85), width: 1.5),
+                  ),
+                  child: const Icon(
+                    Icons.arrow_back_ios,
+                    color: Colors.white,
+                    size: 22,
+                  ),
+                ),
+              ),
             ),
           ),
         ],

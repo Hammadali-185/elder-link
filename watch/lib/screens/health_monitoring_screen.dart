@@ -1,4 +1,7 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import '../services/api_service.dart';
 import '../services/heart_rate_service.dart';
 
@@ -12,13 +15,19 @@ class HealthMonitoringScreen extends StatefulWidget {
 }
 
 class _HealthMonitoringScreenState extends State<HealthMonitoringScreen> {
-  int _heartRate = 0;
+  int? _heartRate;
   bool _isHeartRateActive = false;
   String _bloodPressure = '0/0';
   bool _isReadingBP = false;
   bool _readingSent = false;
   bool _abnormalAlertSent = false;
+  bool _isStartingHeartRate = false;
+  bool _didRestartHeartRateScan = false;
+  bool _heartRateReadingSaved = false;
   String? _sensorStatus;
+  String _heartRateStatusText = 'Scanning...';
+  Timer? _heartRateLoadingTimer;
+  Timer? _heartRateTimeoutTimer;
 
   @override
   void initState() {
@@ -28,36 +37,144 @@ class _HealthMonitoringScreenState extends State<HealthMonitoringScreen> {
 
   @override
   void dispose() {
+    _heartRateLoadingTimer?.cancel();
+    _heartRateTimeoutTimer?.cancel();
+    HeartRateService.onHeartRateUpdate = null;
+    HeartRateService.onAbnormalHeartRate = null;
     HeartRateService.stopMonitoring();
     super.dispose();
   }
 
   Future<void> _initializeHeartRateMonitoring() async {
-    // Check sensor availability
-    final hasSensor = await HeartRateService.checkSensorAvailability();
-    
+    _heartRateLoadingTimer?.cancel();
+    _heartRateTimeoutTimer?.cancel();
+    await HeartRateService.stopMonitoring();
+
     if (mounted) {
       setState(() {
-        _sensorStatus = hasSensor ? 'Real Sensor' : 'Mock Data';
+        _heartRate = null;
+        _isHeartRateActive = false;
+        _isStartingHeartRate = true;
+        _didRestartHeartRateScan = false;
+        _heartRateReadingSaved = false;
+        _heartRateStatusText = 'Scanning...';
+        _sensorStatus = 'Checking watch permission';
       });
     }
-    
-    // Setup callbacks
+
+    final hasPermission = await HeartRateService.ensurePermissions();
+    if (!hasPermission) {
+      if (mounted) {
+        setState(() {
+          _isStartingHeartRate = false;
+          _heartRateStatusText = 'Permission needed';
+          _sensorStatus = 'Allow heart-rate access on the watch';
+        });
+      }
+      return;
+    }
+
+    final hasSensor = await HeartRateService.checkSensorAvailability();
+    if (!hasSensor) {
+      if (mounted) {
+        setState(() {
+          _isStartingHeartRate = false;
+          _heartRateStatusText = 'Sensor unavailable';
+          _sensorStatus = 'No heart-rate sensor found for this app';
+        });
+      }
+      return;
+    }
+
     HeartRateService.onHeartRateUpdate = (int heartRate) {
+      _heartRateLoadingTimer?.cancel();
+      _heartRateTimeoutTimer?.cancel();
       if (mounted) {
         setState(() {
           _heartRate = heartRate;
           _isHeartRateActive = true;
+          _isStartingHeartRate = false;
+          _heartRateStatusText = '$heartRate BPM';
+          _sensorStatus = 'Live wrist reading';
         });
+      }
+      if (!_heartRateReadingSaved) {
+        _heartRateReadingSaved = true;
+        unawaited(_sendHeartRateReading(heartRate));
       }
     };
     
     HeartRateService.onAbnormalHeartRate = (int heartRate) {
       _handleAbnormalHeartRate(heartRate);
     };
-    
-    // Start monitoring
-    await HeartRateService.startMonitoring();
+
+    _heartRateLoadingTimer?.cancel();
+    _heartRateLoadingTimer = Timer(const Duration(milliseconds: 1200), () {
+      if (!mounted || _isHeartRateActive) return;
+      setState(() {
+        _heartRateStatusText = 'Loading...';
+        _sensorStatus = 'Keep the watch snug on your wrist';
+      });
+    });
+
+    _heartRateTimeoutTimer?.cancel();
+    _heartRateTimeoutTimer = Timer(const Duration(seconds: 4), () {
+      if (!mounted || _isHeartRateActive) return;
+      setState(() {
+        _heartRateStatusText = 'Loading...';
+        _sensorStatus = 'Re-scanning sensor...';
+      });
+      _restartHeartRateScan();
+    });
+
+    try {
+      await HeartRateService.startMonitoring();
+      if (mounted) {
+        setState(() {
+          _isStartingHeartRate = false;
+        });
+      }
+      _heartRateTimeoutTimer?.cancel();
+      _heartRateTimeoutTimer = Timer(const Duration(seconds: 10), () {
+        if (!mounted || _isHeartRateActive) return;
+        setState(() {
+          _isStartingHeartRate = false;
+          _heartRateStatusText = 'No reading yet';
+          _sensorStatus = 'Try staying still and scan again';
+        });
+      });
+    } on PlatformException catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _isStartingHeartRate = false;
+        _heartRateStatusText =
+            e.code == 'permission_denied' ? 'Permission needed' : 'Sensor unavailable';
+        _sensorStatus = e.message ?? 'Heart-rate scan could not start';
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _isStartingHeartRate = false;
+        _heartRateStatusText = 'Sensor unavailable';
+        _sensorStatus = 'Heart-rate scan could not start';
+      });
+    }
+  }
+
+  Future<void> _restartHeartRateScan() async {
+    if (_didRestartHeartRateScan || _isHeartRateActive) return;
+    _didRestartHeartRateScan = true;
+    try {
+      await HeartRateService.stopMonitoring();
+      await HeartRateService.startMonitoring();
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _isStartingHeartRate = false;
+        _heartRateStatusText = 'Sensor unavailable';
+        _sensorStatus = 'Heart-rate scan could not restart';
+      });
+    }
   }
 
   Future<void> _handleAbnormalHeartRate(int heartRate) async {
@@ -104,6 +221,35 @@ class _HealthMonitoringScreenState extends State<HealthMonitoringScreen> {
           }
         });
       }
+    }
+  }
+
+  Future<void> _sendHeartRateReading(int heartRate) async {
+    final username = ApiService.userName?.isNotEmpty == true
+        ? ApiService.userName!
+        : 'Watch User';
+    final status = (heartRate < 50 || heartRate > 110) ? 'abnormal' : 'normal';
+
+    final result = await ApiService.sendHealthReading(
+      username: username,
+      heartRate: heartRate,
+      status: status,
+    );
+
+    if (!mounted) return;
+    if (result['success'] == true) {
+      setState(() {
+        _readingSent = true;
+      });
+      Future.delayed(const Duration(seconds: 3), () {
+        if (mounted) {
+          setState(() {
+            _readingSent = false;
+          });
+        }
+      });
+    } else {
+      _heartRateReadingSaved = false;
     }
   }
 
@@ -177,101 +323,89 @@ class _HealthMonitoringScreenState extends State<HealthMonitoringScreen> {
       padding: const EdgeInsets.all(8),
       child: Stack(
         children: [
-          ClipRect(
-            clipBehavior: Clip.hardEdge,
-            child: Column(
-              children: [
-                const Padding(
-                  padding: EdgeInsets.all(8.0),
-                  child: Text(
-                    'Health Monitoring',
-                    style: TextStyle(
-                      color: Colors.white,
-                      fontSize: 18,
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
-                ),
-          Expanded(
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                if (_readingSent)
-                  Container(
-                    padding: const EdgeInsets.all(12),
-                    margin: const EdgeInsets.only(bottom: 16),
-                    decoration: BoxDecoration(
-                      color: Colors.green.withOpacity(0.2),
-                      borderRadius: BorderRadius.circular(12),
-                      border: Border.all(color: Colors.green, width: 2),
-                    ),
-                    child: const Row(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        Icon(Icons.check_circle, color: Colors.green, size: 20),
-                        SizedBox(width: 8),
-                        Text(
-                          'Reading sent successfully!',
-                          style: TextStyle(color: Colors.green, fontSize: 14, fontWeight: FontWeight.bold),
-                        ),
-                      ],
-                    ),
-                  ),
-                _buildHealthCard(
-                  icon: Icons.favorite,
-                  label: 'Heart Rate',
-                  value: _isHeartRateActive 
-                      ? '$_heartRate BPM' 
-                      : 'Starting...',
-                  color: (_heartRate > 0 && (_heartRate < 50 || _heartRate > 110)) 
-                      ? Colors.orange 
-                      : Colors.red,
-                  subtitle: _sensorStatus != null 
-                      ? Text(
-                          _sensorStatus!,
-                          style: const TextStyle(
-                            color: Colors.grey,
-                            fontSize: 10,
-                          ),
-                        )
-                      : null,
-                ),
-                const SizedBox(height: 16),
-                _buildHealthCard(
-                  icon: Icons.monitor_heart,
-                  label: 'Blood Pressure',
-                  value: _isReadingBP ? 'Reading...' : '$_bloodPressure mmHg',
-                  color: Colors.blue,
-                ),
-                const SizedBox(height: 24),
-                GestureDetector(
-                  onTap: _isReadingBP ? null : _startBloodPressureReading,
-                  child: Container(
-                    width: double.infinity,
-                    height: 50,
-                    decoration: BoxDecoration(
-                      color: _isReadingBP ? Colors.grey : Colors.green,
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                    child: Center(
-                      child: Text(
-                        _isReadingBP ? 'READING BP...' : 'MEASURE BP',
-                        style: const TextStyle(
-                          color: Colors.white,
-                          fontSize: 18,
-                          fontWeight: FontWeight.bold,
-                        ),
+          Positioned.fill(
+            child: SingleChildScrollView(
+              padding: const EdgeInsets.fromLTRB(0, 40, 0, 16),
+              child: Column(
+                children: [
+                  const Padding(
+                    padding: EdgeInsets.all(8.0),
+                    child: Text(
+                      'Health Monitoring',
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontSize: 18,
+                        fontWeight: FontWeight.bold,
                       ),
                     ),
                   ),
-                ),
-              ],
+                  if (_readingSent)
+                    Container(
+                      padding: const EdgeInsets.all(12),
+                      margin: const EdgeInsets.only(bottom: 16),
+                      decoration: BoxDecoration(
+                        color: Colors.green.withValues(alpha: 0.2),
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(color: Colors.green, width: 2),
+                      ),
+                      child: const Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Icon(Icons.check_circle, color: Colors.green, size: 20),
+                          SizedBox(width: 8),
+                          Flexible(
+                            child: Text(
+                              'Reading sent successfully!',
+                              style: TextStyle(color: Colors.green, fontSize: 14, fontWeight: FontWeight.bold),
+                              textAlign: TextAlign.center,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  _buildHealthCard(
+                    icon: Icons.favorite,
+                    label: 'Heart Rate',
+                    value: _isHeartRateActive
+                        ? '${_heartRate ?? 0} BPM'
+                        : _heartRateStatusText,
+                    color: ((_heartRate ?? 0) > 0 && ((_heartRate ?? 0) < 50 || (_heartRate ?? 0) > 110))
+                        ? Colors.orange
+                        : (_isHeartRateActive ? Colors.red : Colors.white70),
+                    subtitle: _sensorStatus != null
+                        ? Text(
+                            _sensorStatus!,
+                            style: const TextStyle(
+                              color: Colors.grey,
+                              fontSize: 10,
+                            ),
+                            textAlign: TextAlign.center,
+                          )
+                        : null,
+                  ),
+                  const SizedBox(height: 12),
+                  _buildActionButton(
+                    label: _isStartingHeartRate ? 'SCANNING HEART...' : 'SCAN HEART',
+                    color: _isStartingHeartRate ? Colors.grey : Colors.red,
+                    onTap: _isStartingHeartRate ? null : _initializeHeartRateMonitoring,
+                  ),
+                  const SizedBox(height: 16),
+                  _buildHealthCard(
+                    icon: Icons.monitor_heart,
+                    label: 'Blood Pressure',
+                    value: _isReadingBP ? 'Reading...' : '$_bloodPressure mmHg',
+                    color: Colors.white70,
+                  ),
+                  const SizedBox(height: 12),
+                  _buildActionButton(
+                    label: _isReadingBP ? 'READING BP...' : 'MEASURE BP',
+                    color: _isReadingBP ? Colors.grey : Colors.green,
+                    onTap: _isReadingBP ? null : _startBloodPressureReading,
+                  ),
+                ],
+              ),
             ),
           ),
-              ],
-            ),
-          ),
-          // Back button
           Positioned(
             top: 8,
             left: 8,
@@ -280,14 +414,14 @@ class _HealthMonitoringScreenState extends State<HealthMonitoringScreen> {
               child: InkWell(
                 onTap: widget.onBackTap,
                 borderRadius: BorderRadius.circular(25),
-                splashColor: Colors.white.withOpacity(0.3),
-                highlightColor: Colors.white.withOpacity(0.2),
+                splashColor: Colors.white.withValues(alpha: 0.3),
+                highlightColor: Colors.white.withValues(alpha: 0.2),
                 child: Container(
                   padding: const EdgeInsets.all(10),
                   decoration: BoxDecoration(
-                    color: Colors.black.withOpacity(0.45),
+                    color: Colors.black.withValues(alpha: 0.45),
                     shape: BoxShape.circle,
-                    border: Border.all(color: Colors.white.withOpacity(0.85), width: 1.5),
+                    border: Border.all(color: Colors.white.withValues(alpha: 0.85), width: 1.5),
                   ),
                   child: const Icon(
                     Icons.arrow_back_ios,
@@ -299,6 +433,34 @@ class _HealthMonitoringScreenState extends State<HealthMonitoringScreen> {
             ),
           ),
         ],
+      ),
+    );
+  }
+
+  Widget _buildActionButton({
+    required String label,
+    required Color color,
+    required VoidCallback? onTap,
+  }) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        width: double.infinity,
+        height: 48,
+        decoration: BoxDecoration(
+          color: color,
+          borderRadius: BorderRadius.circular(12),
+        ),
+        child: Center(
+          child: Text(
+            label,
+            style: const TextStyle(
+              color: Colors.white,
+              fontSize: 16,
+              fontWeight: FontWeight.bold,
+            ),
+          ),
+        ),
       ),
     );
   }

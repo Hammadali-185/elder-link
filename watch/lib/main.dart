@@ -9,11 +9,22 @@ import 'screens/health_monitoring_screen.dart';
 import 'screens/audio_screen.dart';
 import 'services/settings_service.dart';
 import 'services/api_service.dart';
+import 'services/music_player_service.dart';
+import 'services/medicine_schedule_monitor.dart';
+import 'ui/watch_frame.dart';
+import 'ui/medicine_schedule_alarm_overlay.dart';
+
+// Record music metadata (not audio) to MongoDB when elder plays on watch.
+const bool _kReportMusicSessions = true;
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await SettingsService.load();
   await ApiService.loadSavedUserInfo();
+  await ApiService.syncElderProfileToServer();
+  await MusicPlayerService.instance.ensureInitialized();
+  MusicPlayerService.reportSessionsToBackend = _kReportMusicSessions;
+  ApiService.debugLogEndpoint();
   runApp(const WatchApp());
 }
 
@@ -28,6 +39,18 @@ class _WatchAppState extends State<WatchApp> {
   int _currentScreen = 0; // 0 = Home, 7 = Panic Button
   double _brightness = SettingsService.brightness;
   String _language = SettingsService.language;
+
+  @override
+  void initState() {
+    super.initState();
+    MedicineScheduleMonitor.instance.start();
+  }
+
+  @override
+  void dispose() {
+    MedicineScheduleMonitor.instance.dispose();
+    super.dispose();
+  }
 
   void _navigateToScreen(int screenIndex) {
     setState(() {
@@ -51,6 +74,8 @@ class _WatchAppState extends State<WatchApp> {
         return MyInfoScreen(onBackTap: _goBack);
       case 6: // Health Monitoring
         return HealthMonitoringScreen(onBackTap: _goBack);
+      case 5: // Music / Audio
+        return AudioScreen(onBackTap: _goBack);
       case 8: // Settings
         return SettingsScreen(
           onBackTap: _goBack,
@@ -87,23 +112,25 @@ class _WatchAppState extends State<WatchApp> {
       debugShowCheckedModeBanner: false,
       home: Scaffold(
         backgroundColor: Colors.transparent,
-        body: Center(
-          child: ClipOval(
-            child: SizedBox(
-              width: 360,
-              height: 360,
+        body: Stack(
+          fit: StackFit.expand,
+          children: [
+            WatchFrame(
               child: Stack(
+                fit: StackFit.expand,
                 children: [
                   _getCurrentScreen(),
-                  // Brightness dimmer overlay (1.0 = no dim)
                   if (_brightness < 1.0)
-                    Container(
-                      color: Colors.black.withOpacity((1.0 - _brightness).clamp(0.0, 0.8)),
+                    IgnorePointer(
+                      child: Container(
+                        color: Colors.black.withOpacity((1.0 - _brightness).clamp(0.0, 0.8)),
+                      ),
                     ),
                 ],
               ),
             ),
-          ),
+            const MedicineScheduleAlarmOverlay(),
+          ],
         ),
       ),
     );

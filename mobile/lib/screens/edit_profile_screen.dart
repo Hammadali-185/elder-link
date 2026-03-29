@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import '../services/staff_users_storage.dart';
 
 class EditProfileScreen extends StatefulWidget {
   const EditProfileScreen({super.key});
@@ -23,9 +24,13 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
 
   Future<void> _loadProfileData() async {
     final prefs = await SharedPreferences.getInstance();
+    final user = await StaffUsersStorage.resolveCurrentUser(prefs);
+    if (!mounted) return;
     setState(() {
-      _nameController.text = prefs.getString('staff_name') ?? '';
-      _usernameController.text = prefs.getString('staff_username') ?? '';
+      if (user != null) {
+        _nameController.text = user.name;
+        _usernameController.text = user.username;
+      }
       _emailController.text = prefs.getString('staff_email') ?? '';
       _phoneController.text = prefs.getString('staff_phone') ?? '';
     });
@@ -48,8 +53,38 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
 
     try {
       final prefs = await SharedPreferences.getInstance();
-      await prefs.setString('staff_name', _nameController.text.trim());
-      await prefs.setString('staff_username', _usernameController.text.trim());
+      final current = await StaffUsersStorage.resolveCurrentUser(prefs);
+      final oldUsername = current?.username.trim() ?? '';
+      if (oldUsername.isEmpty) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Not signed in'),
+              backgroundColor: Colors.red,
+            ),
+          );
+        }
+        return;
+      }
+
+      final err = await StaffUsersStorage.updateUserProfile(
+        prefs,
+        oldUsername: oldUsername,
+        newName: _nameController.text.trim(),
+        newUsername: _usernameController.text.trim(),
+      );
+      if (err != null) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(err),
+              backgroundColor: Colors.red,
+            ),
+          );
+        }
+        return;
+      }
+
       if (_emailController.text.trim().isNotEmpty) {
         await prefs.setString('staff_email', _emailController.text.trim());
       }

@@ -1,5 +1,48 @@
 const Elder = require("../models/elder");
 
+/** Create or update elder by name when watch saves My Info (so staff Meds list sees them). */
+exports.syncFromWatch = async (req, res) => {
+  try {
+    const name = (req.body.name || "").trim();
+    if (!name) {
+      return res.status(400).json({ error: "name is required" });
+    }
+    const roomNumber = (req.body.roomNumber || "").trim() || "—";
+    const age = (req.body.age || "").trim() || "—";
+    const gender = req.body.gender === "Female" ? "Female" : "Male";
+    const diseaseRaw = (req.body.disease || "").trim();
+    const disease = diseaseRaw || undefined;
+
+    const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    let elder = await Elder.findOne({
+      name: new RegExp(`^${escaped}$`, "i"),
+    });
+
+    if (elder) {
+      elder.roomNumber = roomNumber;
+      elder.age = age;
+      elder.gender = gender;
+      elder.disease = disease;
+      elder.updatedAt = new Date();
+      await elder.save();
+      return res.json(elder);
+    }
+
+    elder = await Elder.create({
+      name,
+      roomNumber,
+      age,
+      gender,
+      disease,
+      status: "stable",
+    });
+    return res.status(201).json(elder);
+  } catch (error) {
+    console.error("syncFromWatch:", error);
+    return res.status(400).json({ error: error.message });
+  }
+};
+
 exports.createElder = async (req, res) => {
   try {
     const elder = new Elder(req.body);

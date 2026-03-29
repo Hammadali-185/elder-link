@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-import 'avatar_image_io.dart' if (dart.library.html) 'avatar_image_web.dart' as avatar_image;
+import '../services/staff_users_storage.dart';
+import 'avatar_image_io.dart' if (dart.library.html) 'avatar_image_web.dart'
+    as avatar_image;
 
 class AvatarWidget extends StatelessWidget {
   final double size;
@@ -22,19 +24,22 @@ class AvatarWidget extends StatelessWidget {
         final imagePath = snapshot.data?['imagePath'] as String?;
         final imageBase64 = snapshot.data?['imageBase64'] as String?;
         final isMale = avatarType == 'male';
-        final isFemale = avatarType == 'female';
         final isCustom = avatarType == 'custom';
-        final Color bgColor = (imagePath == null && imageBase64 == null)
+        final Color bgColor = (imagePath == null || imagePath.isEmpty) &&
+                (imageBase64 == null || imageBase64.isEmpty)
             ? (isCustom
                 ? Colors.grey.withOpacity(0.2)
-                : (isMale ? Colors.blue.withOpacity(0.25) : Colors.pink.withOpacity(0.25)))
+                : (isMale
+                    ? Colors.blue.withOpacity(0.25)
+                    : Colors.pink.withOpacity(0.25)))
             : Colors.transparent;
         final Color iconColor = isCustom
             ? Colors.grey.shade700
             : (isMale ? Colors.blue.shade800 : Colors.pink.shade700);
         final IconData defaultIcon =
             isCustom ? Icons.person : (isMale ? Icons.man : Icons.woman);
-        final Color borderColor = (imagePath == null && imageBase64 == null)
+        final Color borderColor = (imagePath == null || imagePath.isEmpty) &&
+                (imageBase64 == null || imageBase64.isEmpty)
             ? (isCustom ? Colors.grey : (isMale ? Colors.blue : Colors.pink))
             : Colors.white;
 
@@ -70,13 +75,11 @@ class AvatarWidget extends StatelessWidget {
 
   Future<Map<String, dynamic>> _getAvatarData() async {
     final prefs = await SharedPreferences.getInstance();
-    final avatarType = prefs.getString('staff_avatar') ?? 'male';
-    final imagePath = prefs.getString('staff_avatar_image_path');
-    final imageBase64 = prefs.getString('staff_avatar_image_base64');
-    return {
-      'type': avatarType,
-      'imagePath': imagePath,
-      'imageBase64': imageBase64,
-    };
+    await prefs.reload();
+    final user = await StaffUsersStorage.resolveCurrentUser(prefs);
+    if (user == null) {
+      return {'type': 'male', 'imagePath': null, 'imageBase64': null};
+    }
+    return StaffUsersStorage.getUserAvatarPreview(prefs, user);
   }
 }

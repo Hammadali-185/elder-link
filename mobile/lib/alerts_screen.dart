@@ -161,11 +161,8 @@ class _AlertsScreenState extends State<AlertsScreen> {
                 : const Icon(Icons.refresh, color: Colors.white),
             onPressed: _isLoading ? null : _loadReadings,
           ),
-          const Icon(Icons.man, size: 20, color: Colors.white),
-          const SizedBox(width: 8),
-          const Icon(Icons.woman, size: 20, color: Colors.white),
           Padding(
-            padding: const EdgeInsets.only(right: 16, left: 8),
+            padding: const EdgeInsets.only(right: 16),
             child: GestureDetector(
               onTap: () {
                 Navigator.of(context).push(
@@ -302,7 +299,14 @@ class _AlertsScreenState extends State<AlertsScreen> {
                               iconColor = Colors.orange;
                               cardColor = Colors.orange;
                               title = '⚠️ Abnormal Reading';
-                              subtitle = '$personName - BP: ${reading.bp} mmHg';
+                              final parts = <String>[];
+                              if (reading.bp > 0) {
+                                parts.add('BP: ${reading.bp} mmHg');
+                              }
+                              if (reading.heartRate > 0) {
+                                parts.add('HR: ${reading.heartRate} BPM');
+                              }
+                              subtitle = '$personName - ${parts.isEmpty ? 'No vitals' : parts.join(' · ')}';
                             }
 
                             return Container(

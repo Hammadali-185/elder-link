@@ -6,8 +6,15 @@ import 'widgets/avatar_widget.dart';
 
 class MedicinesScreen extends StatefulWidget {
   final String? staffName;
-  
-  const MedicinesScreen({super.key, this.staffName});
+
+  /// True when this tab is selected in [StaffHomeScreen]'s bottom nav (IndexedStack keeps this widget alive).
+  final bool isActiveTab;
+
+  const MedicinesScreen({
+    super.key,
+    this.staffName,
+    this.isActiveTab = false,
+  });
 
   @override
   State<MedicinesScreen> createState() => _MedicinesScreenState();
@@ -25,9 +32,18 @@ class _MedicinesScreenState extends State<MedicinesScreen> {
   void initState() {
     super.initState();
     _loadData();
+    // Elders list was only loaded once; watch sync updates /api/elders without remounting IndexedStack.
     _refreshTimer = Timer.periodic(const Duration(seconds: 10), (_) {
-      _loadMedicines();
+      _loadData();
     });
+  }
+
+  @override
+  void didUpdateWidget(MedicinesScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.isActiveTab && !oldWidget.isActiveTab) {
+      _loadData();
+    }
   }
 
   @override
@@ -53,37 +69,46 @@ class _MedicinesScreenState extends State<MedicinesScreen> {
       print('  Manual elders: ${manualElders.length}');
       print('  Readings: ${readings.length}');
       
-      // Extract unique elders from readings (watch users)
-      final Set<String> elderNames = {};
+      // Extract unique elders from readings (watch users) — case-insensitive dedupe.
+      final Set<String> elderKeys = {};
       final List<Elder> allElders = List.from(manualElders);
-      
-      // First, add all manual elder names to the set
+
+      String normKey(String s) => s.trim().toLowerCase();
+
       for (final elder in manualElders) {
-        elderNames.add(elder.name);
+        if (elder.name.trim().isNotEmpty) {
+          elderKeys.add(normKey(elder.name));
+        }
       }
-      
-      // Then, add watch users from readings
+
       for (final reading in readings) {
-        final name = reading.personName ?? reading.username;
-        if (name.isNotEmpty && name != 'Watch User' && !elderNames.contains(name)) {
-          elderNames.add(name);
-          // Check if this elder is already in manual elders
-          final exists = manualElders.any((e) => e.name == name);
-          if (!exists) {
-            // Create an Elder object from reading data
-            allElders.add(Elder(
-              id: reading.id,
-              name: name,
-              roomNumber: reading.roomNumber ?? '',
-              age: reading.age ?? '',
-              disease: reading.disease,
-              status: reading.emergency || reading.status == 'abnormal' ? 'need_attention' : 'stable',
-              gender: reading.gender ?? 'Male',
-              createdAt: reading.timestamp,
-              updatedAt: reading.timestamp,
-            ));
-            print('  Added watch user: $name (Room: ${reading.roomNumber ?? "N/A"})');
-          }
+        final rawPerson = reading.personName?.trim();
+        final rawUser = reading.username.trim();
+        // Prefer saved display name; fall back to username (do not hide "Watch User" if that is all we have).
+        final displayName =
+            (rawPerson != null && rawPerson.isNotEmpty) ? rawPerson : rawUser;
+        if (displayName.isEmpty) continue;
+
+        final key = normKey(displayName);
+        if (elderKeys.contains(key)) continue;
+        elderKeys.add(key);
+
+        final exists = manualElders.any((e) => normKey(e.name) == key);
+        if (!exists) {
+          allElders.add(Elder(
+            id: reading.id,
+            name: displayName,
+            roomNumber: reading.roomNumber ?? '',
+            age: reading.age ?? '',
+            disease: reading.disease,
+            status: reading.emergency || reading.status == 'abnormal'
+                ? 'need_attention'
+                : 'stable',
+            gender: reading.gender ?? 'Male',
+            createdAt: reading.timestamp,
+            updatedAt: reading.timestamp,
+          ));
+          print('  Added watch user from readings: $displayName');
         }
       }
       
@@ -342,11 +367,8 @@ class _MedicinesScreenState extends State<MedicinesScreen> {
         elevation: 2,
         centerTitle: false,
         actions: [
-          const Icon(Icons.man, size: 20, color: Colors.white),
-          const SizedBox(width: 8),
-          const Icon(Icons.woman, size: 20, color: Colors.white),
           Padding(
-            padding: const EdgeInsets.only(right: 16, left: 8),
+            padding: const EdgeInsets.only(right: 16),
             child: GestureDetector(
               onTap: () {
                 Navigator.of(context).push(
@@ -451,14 +473,14 @@ class _MedicinesScreenState extends State<MedicinesScreen> {
                             ),
                             const SizedBox(height: 16),
                             ElevatedButton(
-                              onPressed: _loadMedicines,
+                              onPressed: _loadData,
                               child: const Text('Retry'),
                             ),
                           ],
                         ),
                       )
                     : RefreshIndicator(
-                        onRefresh: _loadMedicines,
+                        onRefresh: _loadData,
                         child: _medicines.isEmpty
                             ? Center(
                                 child: Column(

@@ -1,12 +1,12 @@
-import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
-import 'package:vibration/vibration.dart';
 import 'dart:async';
+
+import 'package:flutter/material.dart';
 import '../services/api_service.dart';
 
+/// Medicine list only; dose alarms are handled app-wide by MedicineScheduleMonitor.
 class MedicineReminderScreen extends StatefulWidget {
   final VoidCallback? onBackTap;
-  
+
   const MedicineReminderScreen({super.key, this.onBackTap});
 
   @override
@@ -15,207 +15,41 @@ class MedicineReminderScreen extends StatefulWidget {
 
 class _MedicineReminderScreenState extends State<MedicineReminderScreen> {
   List<WatchMedicine> _medicines = [];
+  String? _loadError;
   bool _isLoading = true;
   Timer? _refreshTimer;
-  Timer? _checkTimer;
-  Set<String> _notifiedMedicines = {};
 
   @override
   void initState() {
     super.initState();
     _loadMedicines();
-    // Refresh every 30 seconds
     _refreshTimer = Timer.periodic(const Duration(seconds: 30), (_) {
       _loadMedicines();
-    });
-    // Check for new medicines every 10 seconds
-    _checkTimer = Timer.periodic(const Duration(seconds: 10), (_) {
-      _checkForNewMedicines();
     });
   }
 
   @override
   void dispose() {
     _refreshTimer?.cancel();
-    _checkTimer?.cancel();
     super.dispose();
   }
 
   Future<void> _loadMedicines() async {
     try {
       final medicines = await ApiService.getMedicines(date: DateTime.now());
-      if (mounted) {
-        setState(() {
-          _medicines = medicines;
-          _isLoading = false;
-        });
-      }
+      if (!mounted) return;
+      setState(() {
+        _medicines = medicines;
+        _loadError = ApiService.lastMedicinesFetchError;
+        _isLoading = false;
+      });
     } catch (e) {
       if (mounted) {
         setState(() {
+          _loadError = e.toString();
           _isLoading = false;
         });
       }
-    }
-  }
-
-  Future<void> _checkForNewMedicines() async {
-    try {
-      final medicines = await ApiService.getMedicines(date: DateTime.now());
-      final previousIds = _medicines.map((m) => m.id).toSet();
-      final currentIds = medicines.map((m) => m.id).toSet();
-      
-      // Check for newly added medicines
-      for (final medicine in medicines) {
-        if (!previousIds.contains(medicine.id) && medicine.status == 'pending') {
-          // New medicine was just added - notify immediately
-          _notifyNewMedicine(medicine);
-          _notifiedMedicines.add(medicine.id);
-        } else if (!_notifiedMedicines.contains(medicine.id) && medicine.status == 'pending') {
-          // Check if it's time for the medicine (within 5 minutes of scheduled time)
-          final now = DateTime.now();
-          final scheduledTime = _parseTime(medicine.time);
-          final currentTime = DateTime(now.year, now.month, now.day, now.hour, now.minute);
-          final timeDifference = scheduledTime.difference(currentTime).inMinutes.abs();
-          
-          if (timeDifference <= 5) {
-            // Notify user it's time to take medicine
-            _notifyMedicine(medicine);
-            _notifiedMedicines.add(medicine.id);
-          }
-        }
-      }
-      
-      if (mounted) {
-        setState(() {
-          _medicines = medicines;
-        });
-      }
-    } catch (e) {
-      print('Error checking medicines: $e');
-    }
-  }
-
-  Future<void> _notifyNewMedicine(WatchMedicine medicine) async {
-    // Vibrate pattern for new medicine
-    if (await Vibration.hasVibrator() ?? false) {
-      Vibration.vibrate(pattern: [0, 300, 100, 300, 100, 300], repeat: 0);
-    }
-    
-    // Haptic feedback
-    HapticFeedback.mediumImpact();
-    
-    // Show notification dialog
-    if (mounted) {
-      showDialog(
-        context: context,
-        barrierDismissible: false,
-        builder: (context) => AlertDialog(
-          backgroundColor: Colors.blue,
-          title: const Text(
-            '💊 New Medicine Set',
-            style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
-          ),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                medicine.medicineName,
-                style: const TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold),
-              ),
-              const SizedBox(height: 8),
-              Text(
-                'Dosage: ${medicine.dosage}',
-                style: const TextStyle(color: Colors.white70),
-              ),
-              Text(
-                'Take at: ${medicine.time}',
-                style: const TextStyle(color: Colors.white70),
-              ),
-              const SizedBox(height: 8),
-              const Text(
-                'You will be reminded at the scheduled time.',
-                style: TextStyle(color: Colors.white70, fontSize: 12),
-              ),
-            ],
-          ),
-          actions: [
-            TextButton(
-              onPressed: () {
-                Navigator.of(context).pop();
-              },
-              child: const Text(
-                'OK',
-                style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
-              ),
-            ),
-          ],
-        ),
-      );
-    }
-  }
-
-  DateTime _parseTime(String timeStr) {
-    final parts = timeStr.split(':');
-    final hour = int.parse(parts[0]);
-    final minute = int.parse(parts[1]);
-    final now = DateTime.now();
-    return DateTime(now.year, now.month, now.day, hour, minute);
-  }
-
-  Future<void> _notifyMedicine(WatchMedicine medicine) async {
-    // Vibrate
-    if (await Vibration.hasVibrator() ?? false) {
-      Vibration.vibrate(pattern: [0, 500, 200, 500], repeat: 0);
-    }
-    
-    // Haptic feedback
-    HapticFeedback.mediumImpact();
-    
-    // Show notification dialog
-    if (mounted) {
-      showDialog(
-        context: context,
-        barrierDismissible: false,
-        builder: (context) => AlertDialog(
-          backgroundColor: Colors.blue,
-          title: const Text(
-            '💊 Medicine Reminder',
-            style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
-          ),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                medicine.medicineName,
-                style: const TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold),
-              ),
-              const SizedBox(height: 8),
-              Text(
-                'Dosage: ${medicine.dosage}',
-                style: const TextStyle(color: Colors.white70),
-              ),
-              Text(
-                'Time: ${medicine.time}',
-                style: const TextStyle(color: Colors.white70),
-              ),
-            ],
-          ),
-          actions: [
-            TextButton(
-              onPressed: () {
-                Navigator.of(context).pop();
-              },
-              child: const Text(
-                'OK',
-                style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
-              ),
-            ),
-          ],
-        ),
-      );
     }
   }
 
@@ -270,8 +104,70 @@ class _MedicineReminderScreenState extends State<MedicineReminderScreen> {
         shape: BoxShape.circle,
       ),
       child: Stack(
+        clipBehavior: Clip.none,
         children: [
-          // Back button
+          Center(
+            child: SizedBox(
+              width: 320,
+              child: _isLoading
+                  ? const Center(child: CircularProgressIndicator(color: Colors.white70))
+                  : _medicines.isEmpty
+                      ? Center(
+                          child: Padding(
+                            padding: const EdgeInsets.symmetric(horizontal: 16),
+                            child: Column(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              children: [
+                                Icon(
+                                  _loadError != null ? Icons.cloud_off : Icons.medication_outlined,
+                                  color: _loadError != null ? Colors.orange : Colors.grey,
+                                  size: 48,
+                                ),
+                                const SizedBox(height: 12),
+                                Text(
+                                  _loadError != null
+                                      ? 'Can\'t reach server'
+                                      : 'No medicines scheduled',
+                                  style: TextStyle(
+                                    color: _loadError != null ? Colors.orange : Colors.grey,
+                                    fontSize: 14,
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                                  textAlign: TextAlign.center,
+                                ),
+                                if (_loadError != null) ...[
+                                  const SizedBox(height: 8),
+                                  Text(
+                                    _loadError!,
+                                    style: const TextStyle(color: Colors.white54, fontSize: 11),
+                                    textAlign: TextAlign.center,
+                                    maxLines: 4,
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                                ],
+                              ],
+                            ),
+                          ),
+                        )
+                      : SingleChildScrollView(
+                          padding: const EdgeInsets.only(top: 60, bottom: 20),
+                          child: Column(
+                            children: [
+                              const Text(
+                                'Medicines',
+                                style: TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 20,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                              const SizedBox(height: 16),
+                              ..._medicines.map((medicine) => _buildMedicineCard(medicine)),
+                            ],
+                          ),
+                        ),
+            ),
+          ),
           Positioned(
             top: 28,
             left: 28,
@@ -298,46 +194,6 @@ class _MedicineReminderScreenState extends State<MedicineReminderScreen> {
               ),
             ),
           ),
-          // Content
-          Center(
-            child: SizedBox(
-              width: 320,
-              child: _isLoading
-                  ? const Center(child: CircularProgressIndicator(color: Colors.blue))
-                  : _medicines.isEmpty
-                      ? const Center(
-                          child: Column(
-                            mainAxisAlignment: MainAxisAlignment.center,
-                            children: [
-                              Icon(Icons.medication_outlined, color: Colors.grey, size: 48),
-                              SizedBox(height: 12),
-                              Text(
-                                'No medicines scheduled',
-                                style: TextStyle(color: Colors.grey, fontSize: 14),
-                                textAlign: TextAlign.center,
-                              ),
-                            ],
-                          ),
-                        )
-                      : SingleChildScrollView(
-                          padding: const EdgeInsets.only(top: 60, bottom: 20),
-                          child: Column(
-                            children: [
-                              const Text(
-                                'Medicines',
-                                style: TextStyle(
-                                  color: Colors.white,
-                                  fontSize: 20,
-                                  fontWeight: FontWeight.bold,
-                                ),
-                              ),
-                              const SizedBox(height: 16),
-                              ..._medicines.map((medicine) => _buildMedicineCard(medicine)),
-                            ],
-                          ),
-                        ),
-            ),
-          ),
         ],
       ),
     );
@@ -346,7 +202,7 @@ class _MedicineReminderScreenState extends State<MedicineReminderScreen> {
   Widget _buildMedicineCard(WatchMedicine medicine) {
     final isTaken = medicine.status == 'taken';
     final isMissed = medicine.status == 'missed';
-    
+
     return Container(
       margin: const EdgeInsets.only(bottom: 12),
       padding: const EdgeInsets.all(12),
@@ -354,11 +210,11 @@ class _MedicineReminderScreenState extends State<MedicineReminderScreen> {
         color: Colors.grey[900],
         borderRadius: BorderRadius.circular(12),
         border: Border.all(
-          color: isTaken 
-              ? Colors.green 
-              : isMissed 
-                  ? Colors.red 
-                  : Colors.blue,
+          color: isTaken
+              ? Colors.green
+              : isMissed
+                  ? Colors.red
+                  : Colors.white70,
           width: 2,
         ),
       ),
@@ -369,7 +225,7 @@ class _MedicineReminderScreenState extends State<MedicineReminderScreen> {
             children: [
               Icon(
                 Icons.medication,
-                color: isTaken ? Colors.green : isMissed ? Colors.red : Colors.blue,
+                color: isTaken ? Colors.green : isMissed ? Colors.red : Colors.white70,
                 size: 24,
               ),
               const SizedBox(width: 8),

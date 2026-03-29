@@ -3,7 +3,8 @@ import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:image_picker/image_picker.dart';
 
-import 'main.dart';
+import 'services/staff_users_storage.dart';
+import 'staff_gate_nav.dart';
 import 'widgets/avatar_storage_io.dart' if (dart.library.html) 'widgets/avatar_storage_web.dart' as avatar_storage;
 import 'screens/edit_profile_screen.dart';
 import 'screens/notification_settings_screen.dart';
@@ -42,8 +43,15 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen> {
 
   Future<void> _loadStaffName() async {
     final prefs = await SharedPreferences.getInstance();
+    final user = await StaffUsersStorage.resolveCurrentUser(prefs);
+    if (!mounted) return;
     setState(() {
-      _currentStaffName = prefs.getString('staff_name') ?? widget.staffName;
+      if (user != null) {
+        _currentStaffName =
+            user.name.isNotEmpty ? user.name : user.username;
+      } else {
+        _currentStaffName = widget.staffName;
+      }
     });
   }
 
@@ -72,6 +80,7 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen> {
       if (image != null) {
         final prefs = await SharedPreferences.getInstance();
         await avatar_storage.savePickedImage(image, prefs);
+        await StaffUsersStorage.syncCustomAvatarForCurrentUser(prefs);
         final bytes = await avatar_storage.loadAvatarBytes(prefs);
         if (mounted) {
           setState(() {
@@ -108,14 +117,33 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen> {
 
   Future<void> _loadAvatarPreference() async {
     final prefs = await SharedPreferences.getInstance();
+    final user = await StaffUsersStorage.resolveCurrentUser(prefs);
+    if (!mounted) return;
     setState(() {
-      _selectedAvatar = prefs.getString('staff_avatar') ?? 'male';
+      _selectedAvatar = user?.avatar ?? 'male';
     });
   }
 
   Future<void> _saveAvatarPreference(String avatar) async {
     final prefs = await SharedPreferences.getInstance();
-    await prefs.setString('staff_avatar', avatar);
+    final sessionUser = await StaffUsersStorage.resolveCurrentUser(prefs);
+    final u = sessionUser?.username;
+    if (u == null || u.isEmpty) return;
+
+    if (avatar != 'custom') {
+      await prefs.remove('staff_avatar_image_path');
+      await prefs.remove('staff_avatar_image_base64');
+      if (mounted) {
+        setState(() => _avatarImageBytes = null);
+      }
+    }
+
+    await StaffUsersStorage.updateUserAvatar(prefs, u, avatar);
+    final refreshed = await StaffUsersStorage.resolveCurrentUser(prefs);
+    if (refreshed != null) {
+      await StaffUsersStorage.applySession(prefs, refreshed);
+    }
+
     setState(() {
       _selectedAvatar = avatar;
     });
@@ -164,9 +192,28 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen> {
 
     try {
       final prefs = await SharedPreferences.getInstance();
-      final savedPassword = prefs.getString('staff_password');
+      await prefs.reload();
+      final sessionUser = await StaffUsersStorage.resolveCurrentUser(prefs);
+      final u = sessionUser?.username;
+      if (u == null || u.isEmpty) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Not signed in'),
+              backgroundColor: Colors.red,
+            ),
+          );
+        }
+        return;
+      }
 
-      if (savedPassword != _oldPasswordController.text.trim()) {
+      final users = await StaffUsersStorage.getUsers(prefs);
+      final match = StaffUsersStorage.findByCredentials(
+        users,
+        u,
+        _oldPasswordController.text.trim(),
+      );
+      if (match == null) {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(
@@ -178,7 +225,8 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen> {
         return;
       }
 
-      await prefs.setString('staff_password', _newPasswordController.text.trim());
+      final newPass = _newPasswordController.text.trim();
+      await StaffUsersStorage.updateUserPassword(prefs, u, newPass);
 
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -547,13 +595,10 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen> {
                 ),
                 onPressed: () async {
                   final prefs = await SharedPreferences.getInstance();
-                  await prefs.setBool('staff_logged_in', false);
-                  
+                  await StaffUsersStorage.logoutSession(prefs);
+
                   if (context.mounted) {
-                    Navigator.of(context).pushAndRemoveUntil(
-                      MaterialPageRoute(builder: (_) => const MobileApp()),
-                      (route) => false,
-                    );
+                    await replaceRouteAfterStaffLogout(context);
                   }
                 },
                 child: const Text(

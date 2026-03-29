@@ -5,7 +5,6 @@ import 'package:image_picker/image_picker.dart';
 import 'package:path_provider/path_provider.dart';
 
 const _keyPath = 'staff_avatar_image_path';
-const _keyBase64 = 'staff_avatar_image_base64';
 
 Future<Uint8List?> loadAvatarBytes(SharedPreferences prefs) async {
   try {
@@ -36,7 +35,6 @@ Future<void> savePickedImage(XFile image, SharedPreferences prefs) async {
     } else {
       await prefs.setString(_keyPath, image.path);
     }
-    await prefs.setString('staff_avatar', 'custom');
   } catch (e) {
     rethrow;
   }

@@ -1,20 +1,21 @@
 import 'dart:convert';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 
 class ApiService {
-  // Backend API base URL - update this to match your server
-  // Same PC: http://127.0.0.1:5000/api  |  Other device: http://BACKEND_PC_IP:5000/api
-  static const String baseUrl = 'http://127.0.0.1:5000/api';
+  /// Web: `localhost` + server PNA header avoids Chrome "Failed to fetch" to loopback.
+  /// Native: `127.0.0.1` (emulator/USB forward); physical device → use PC LAN IP via dart-define if needed.
+  static String get baseUrl => kIsWeb
+      ? 'http://localhost:5000/api'
+      : 'http://127.0.0.1:5000/api';
 
   // Fetch all readings
   static Future<List<Reading>> getAllReadings() async {
     try {
       print('Fetching readings from: $baseUrl/readings');
-      final response = await http.get(
-        Uri.parse('$baseUrl/readings'),
-        headers: {'Content-Type': 'application/json'},
-      );
+      // No custom headers on GET — avoids CORS preflight on Flutter web / Chrome.
+      final response = await http.get(Uri.parse('$baseUrl/readings'));
 
       print('Readings response status: ${response.statusCode}');
       
@@ -45,7 +46,6 @@ class ApiService {
     try {
       final response = await http.get(
         Uri.parse('$baseUrl/readings/user/$username'),
-        headers: {'Content-Type': 'application/json'},
       );
 
       if (response.statusCode == 200) {
@@ -64,10 +64,7 @@ class ApiService {
   static Future<List<Elder>> getAllElders() async {
     try {
       print('Fetching elders from: $baseUrl/elders');
-      final response = await http.get(
-        Uri.parse('$baseUrl/elders'),
-        headers: {'Content-Type': 'application/json'},
-      );
+      final response = await http.get(Uri.parse('$baseUrl/elders'));
 
       print('Elders response status: ${response.statusCode}');
       
@@ -139,10 +136,7 @@ class ApiService {
         url += '?${Uri(queryParameters: queryParams).query}';
       }
       
-      final response = await http.get(
-        Uri.parse(url),
-        headers: {'Content-Type': 'application/json'},
-      );
+      final response = await http.get(Uri.parse(url));
 
       if (response.statusCode == 200) {
         final List<dynamic> data = jsonDecode(response.body);
@@ -382,10 +376,7 @@ class ApiService {
         url += '?${Uri(queryParameters: queryParams).query}';
       }
       
-      final response = await http.get(
-        Uri.parse(url),
-        headers: {'Content-Type': 'application/json'},
-      );
+      final response = await http.get(Uri.parse(url));
 
       if (response.statusCode == 200) {
         final List<dynamic> data = jsonDecode(response.body);
@@ -413,6 +404,141 @@ class ApiService {
       print('Error updating elder medicine status: $e');
       return false;
     }
+  }
+
+  /// Staff dashboard: music analytics (metadata only; no audio URLs or files).
+  static Future<MusicDashboardSummary?> getMusicDashboard() async {
+    try {
+      final response = await http.get(
+        Uri.parse('$baseUrl/music-sessions/dashboard'),
+      );
+      if (response.statusCode != 200) return null;
+      return MusicDashboardSummary.fromJson(
+        jsonDecode(response.body) as Map<String, dynamic>,
+      );
+    } catch (e) {
+      print('Error music dashboard: $e');
+      return null;
+    }
+  }
+}
+
+class MusicNowPlayingDto {
+  final String sessionId;
+  final String elderId;
+  final String elderName;
+  final String trackId;
+  final String title;
+  final String artist;
+  final String category;
+  final DateTime playStart;
+
+  MusicNowPlayingDto({
+    required this.sessionId,
+    required this.elderId,
+    required this.elderName,
+    required this.trackId,
+    required this.title,
+    required this.artist,
+    required this.category,
+    required this.playStart,
+  });
+
+  factory MusicNowPlayingDto.fromJson(Map<String, dynamic> j) {
+    return MusicNowPlayingDto(
+      sessionId: j['sessionId'] as String? ?? '',
+      elderId: j['elderId'] as String? ?? '',
+      elderName: j['elderName'] as String? ?? '',
+      trackId: j['trackId'] as String? ?? '',
+      title: j['title'] as String? ?? '',
+      artist: j['artist'] as String? ?? '',
+      category: j['category'] as String? ?? '',
+      playStart: DateTime.tryParse(j['playStart'] as String? ?? '') ?? DateTime.now().toUtc(),
+    );
+  }
+}
+
+class ElderListeningTodayDto {
+  final String elderId;
+  final String elderName;
+  final int totalSeconds;
+
+  ElderListeningTodayDto({
+    required this.elderId,
+    required this.elderName,
+    required this.totalSeconds,
+  });
+
+  factory ElderListeningTodayDto.fromJson(Map<String, dynamic> j) {
+    return ElderListeningTodayDto(
+      elderId: j['elderId'] as String? ?? '',
+      elderName: j['elderName'] as String? ?? '',
+      totalSeconds: (j['totalSeconds'] as num?)?.toInt() ?? 0,
+    );
+  }
+}
+
+class LastPlayedElderDto {
+  final String elderId;
+  final String elderName;
+  final DateTime lastPlayedAt;
+
+  LastPlayedElderDto({
+    required this.elderId,
+    required this.elderName,
+    required this.lastPlayedAt,
+  });
+
+  factory LastPlayedElderDto.fromJson(Map<String, dynamic> j) {
+    return LastPlayedElderDto(
+      elderId: j['elderId'] as String? ?? '',
+      elderName: j['elderName'] as String? ?? '',
+      lastPlayedAt:
+          DateTime.tryParse(j['lastPlayedAt'] as String? ?? '') ?? DateTime.now().toUtc(),
+    );
+  }
+}
+
+class MusicDashboardSummary {
+  final DateTime generatedAt;
+  final DateTime utcDayStart;
+  final int activeListenersCount;
+  final List<MusicNowPlayingDto> nowPlaying;
+  final List<ElderListeningTodayDto> listeningTodaySecondsByElder;
+  final String? mostPlayedCategory;
+  final int? mostPlayedCategorySeconds;
+  final List<LastPlayedElderDto> lastPlayedByElder;
+
+  MusicDashboardSummary({
+    required this.generatedAt,
+    required this.utcDayStart,
+    required this.activeListenersCount,
+    required this.nowPlaying,
+    required this.listeningTodaySecondsByElder,
+    required this.mostPlayedCategory,
+    required this.mostPlayedCategorySeconds,
+    required this.lastPlayedByElder,
+  });
+
+  factory MusicDashboardSummary.fromJson(Map<String, dynamic> j) {
+    final mpc = j['mostPlayedCategoryToday'] as Map<String, dynamic>?;
+    return MusicDashboardSummary(
+      generatedAt: DateTime.tryParse(j['generatedAt'] as String? ?? '') ?? DateTime.now().toUtc(),
+      utcDayStart: DateTime.tryParse(j['utcDayStart'] as String? ?? '') ?? DateTime.now().toUtc(),
+      activeListenersCount: (j['activeListenersCount'] as num?)?.toInt() ?? 0,
+      nowPlaying: (j['nowPlaying'] as List<dynamic>? ?? [])
+          .map((e) => MusicNowPlayingDto.fromJson(e as Map<String, dynamic>))
+          .toList(),
+      listeningTodaySecondsByElder:
+          (j['listeningTodaySecondsByElder'] as List<dynamic>? ?? [])
+              .map((e) => ElderListeningTodayDto.fromJson(e as Map<String, dynamic>))
+              .toList(),
+      mostPlayedCategory: mpc?['category'] as String?,
+      mostPlayedCategorySeconds: (mpc?['totalSeconds'] as num?)?.toInt(),
+      lastPlayedByElder: (j['lastPlayedByElder'] as List<dynamic>? ?? [])
+          .map((e) => LastPlayedElderDto.fromJson(e as Map<String, dynamic>))
+          .toList(),
+    );
   }
 }
 
@@ -515,6 +641,7 @@ class Reading {
   final String id;
   final String username;
   final int bp;
+  final int heartRate;
   final String status;
   final bool emergency;
   final DateTime timestamp;
@@ -528,6 +655,7 @@ class Reading {
     required this.id,
     required this.username,
     required this.bp,
+    required this.heartRate,
     required this.status,
     required this.emergency,
     required this.timestamp,
@@ -543,6 +671,7 @@ class Reading {
       id: json['_id'] ?? json['id'] ?? '',
       username: json['username'] ?? '',
       bp: json['bp'] ?? 0,
+      heartRate: (json['heartRate'] as num?)?.toInt() ?? 0,
       status: json['status'] ?? 'normal',
       emergency: json['emergency'] ?? false,
       timestamp: json['timestamp'] != null

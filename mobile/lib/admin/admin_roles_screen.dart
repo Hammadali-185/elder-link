@@ -1,12 +1,47 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
-class AdminRolesScreen extends StatelessWidget {
+import '../services/staff_users_storage.dart';
+import '../widgets/staff_account_avatar.dart';
+import 'admin_live_data.dart';
+
+class AdminRolesScreen extends StatefulWidget {
   const AdminRolesScreen({super.key});
+
+  @override
+  State<AdminRolesScreen> createState() => _AdminRolesScreenState();
+}
+
+class _AdminRolesScreenState extends State<AdminRolesScreen> {
+  AdminStaffSnapshot? _snapshot;
+  Timer? _refreshTimer;
 
   static const _deepMint = Color(0xFF17A2A2);
   static const _bg = Color(0xFFF6FFFA);
   static const _textPrimary = Color(0xFF1A3C34);
   static const _textSecondary = Color(0xFF5A7A72);
+
+  @override
+  void initState() {
+    super.initState();
+    _loadSnapshot();
+    _refreshTimer = Timer.periodic(const Duration(seconds: 5), (_) => _loadSnapshot());
+  }
+
+  @override
+  void dispose() {
+    _refreshTimer?.cancel();
+    super.dispose();
+  }
+
+  Future<void> _loadSnapshot() async {
+    final snapshot = await loadAdminStaffSnapshot();
+    if (!mounted) return;
+    setState(() {
+      _snapshot = snapshot;
+    });
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -24,10 +59,10 @@ class AdminRolesScreen extends StatelessWidget {
         centerTitle: false,
       ),
       body: SafeArea(
-        child: SingleChildScrollView(
-          padding: const EdgeInsets.all(20),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
+        child: RefreshIndicator(
+          onRefresh: _loadSnapshot,
+          child: ListView(
+            padding: const EdgeInsets.all(20),
             children: [
               Text(
                 'Roles & Permissions',
@@ -39,28 +74,13 @@ class AdminRolesScreen extends StatelessWidget {
               ),
               const SizedBox(height: 6),
               Text(
-                'Control what each role can access.',
+                'Realtime roles for live nurse accounts.',
                 style: TextStyle(fontSize: 14, color: _textSecondary),
               ),
               const SizedBox(height: 20),
               _RoleCard(
-                title: 'Admin',
-                subtitle: 'Full access (system owner)',
-                color: _deepMint,
-                icon: Icons.admin_panel_settings_rounded,
-                permissions: const [
-                  'View dashboard',
-                  'Manage staff',
-                  'Manage roles & permissions',
-                  'View logs',
-                  'Change system settings',
-                  'Export reports',
-                ],
-              ),
-              const SizedBox(height: 12),
-              _RoleCard(
                 title: 'Nurse',
-                subtitle: 'Clinical monitoring & alerts',
+                subtitle: 'The live staff role used across the app',
                 color: Colors.teal,
                 icon: Icons.medical_services_rounded,
                 permissions: const [
@@ -68,41 +88,13 @@ class AdminRolesScreen extends StatelessWidget {
                   'View elders',
                   'Manage medicines',
                   'View alerts',
-                  'Mark alerts resolved',
-                  'View care notes',
-                ],
-              ),
-              const SizedBox(height: 12),
-              _RoleCard(
-                title: 'Caretaker',
-                subtitle: 'Daily support & tracking',
-                color: Colors.green,
-                icon: Icons.volunteer_activism_rounded,
-                permissions: const [
-                  'View elders',
-                  'View schedules',
-                  'Log basic activity',
-                  'View assigned alerts',
-                  'Add care notes',
-                ],
-              ),
-              const SizedBox(height: 12),
-              _RoleCard(
-                title: 'Supervisor',
-                subtitle: 'Oversight & reporting',
-                color: Colors.indigo,
-                icon: Icons.supervisor_account_rounded,
-                permissions: const [
-                  'View dashboard',
-                  'View staff activity',
-                  'View logs',
-                  'Approve changes',
-                  'Generate reports',
+                  'Monitor music panel',
+                  'Use account settings',
                 ],
               ),
               const SizedBox(height: 26),
               Text(
-                'People',
+                'Nurse accounts',
                 style: TextStyle(
                   fontSize: 18,
                   fontWeight: FontWeight.w700,
@@ -111,14 +103,25 @@ class AdminRolesScreen extends StatelessWidget {
               ),
               const SizedBox(height: 6),
               Text(
-                'Individuals grouped by role (dummy data).',
+                'Every saved staff account appears here as a nurse.',
                 style: TextStyle(fontSize: 14, color: _textSecondary),
               ),
               const SizedBox(height: 14),
-              ..._people.map((p) => Padding(
-                    padding: const EdgeInsets.only(bottom: 12),
-                    child: _PersonCard(person: p),
-                  )),
+              if (_snapshot == null)
+                const Padding(
+                  padding: EdgeInsets.symmetric(vertical: 60),
+                  child: Center(child: CircularProgressIndicator()),
+                )
+              else if (_snapshot!.nurses.isEmpty)
+                _buildEmptyCard('No nurse accounts have been created yet.')
+              else
+                ..._snapshot!.nurses.map((nurse) => Padding(
+                      padding: const EdgeInsets.only(bottom: 12),
+                      child: _NurseRoleCard(
+                        nurse: nurse,
+                        isActive: _snapshot!.activeNurse?.id == nurse.id,
+                      ),
+                    )),
               const SizedBox(height: 24),
             ],
           ),
@@ -126,37 +129,43 @@ class AdminRolesScreen extends StatelessWidget {
       ),
     );
   }
+
+  Widget _buildEmptyCard(String message) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(18),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: Colors.black.withValues(alpha: 0.04)),
+      ),
+      child: Text(
+        message,
+        style: TextStyle(
+          fontSize: 14,
+          color: Colors.black.withValues(alpha: 0.65),
+          fontWeight: FontWeight.w600,
+        ),
+      ),
+    );
+  }
 }
 
-class _Person {
-  final String name;
-  final String role;
+class _NurseRoleCard extends StatelessWidget {
+  final StaffUser nurse;
   final bool isActive;
-  final String lastActive;
-  final List<String> assignedElders;
-  final Color roleColor;
-  final IconData roleIcon;
 
-  const _Person({
-    required this.name,
-    required this.role,
+  const _NurseRoleCard({
+    required this.nurse,
     required this.isActive,
-    required this.lastActive,
-    required this.assignedElders,
-    required this.roleColor,
-    required this.roleIcon,
   });
-}
-
-class _PersonCard extends StatelessWidget {
-  final _Person person;
-
-  const _PersonCard({required this.person});
 
   @override
   Widget build(BuildContext context) {
-    final statusColor = person.isActive ? Colors.green : Colors.red;
-    final statusBg = person.isActive ? Colors.green.withOpacity(0.10) : Colors.red.withOpacity(0.10);
+    final statusColor = isActive ? Colors.green : Colors.orange;
+    final statusBg = isActive
+        ? Colors.green.withValues(alpha: 0.10)
+        : Colors.orange.withValues(alpha: 0.10);
 
     return Container(
       width: double.infinity,
@@ -164,10 +173,10 @@ class _PersonCard extends StatelessWidget {
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: Colors.black.withOpacity(0.04)),
+        border: Border.all(color: Colors.black.withValues(alpha: 0.04)),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withOpacity(0.06),
+            color: Colors.black.withValues(alpha: 0.06),
             blurRadius: 12,
             offset: const Offset(0, 4),
           ),
@@ -178,21 +187,14 @@ class _PersonCard extends StatelessWidget {
         children: [
           Row(
             children: [
-              Container(
-                padding: const EdgeInsets.all(10),
-                decoration: BoxDecoration(
-                  color: person.roleColor.withOpacity(0.15),
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                child: Icon(person.roleIcon, color: person.roleColor, size: 22),
-              ),
+              StaffAccountAvatar(user: nurse, size: 48),
               const SizedBox(width: 12),
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      person.name,
+                      displayStaffName(nurse),
                       style: const TextStyle(
                         fontSize: 16,
                         fontWeight: FontWeight.w800,
@@ -201,8 +203,8 @@ class _PersonCard extends StatelessWidget {
                     ),
                     const SizedBox(height: 2),
                     Text(
-                      person.role,
-                      style: TextStyle(fontSize: 13, color: Colors.black.withOpacity(0.62)),
+                      'Nurse',
+                      style: TextStyle(fontSize: 13, color: Colors.black.withValues(alpha: 0.62)),
                     ),
                   ],
                 ),
@@ -212,10 +214,10 @@ class _PersonCard extends StatelessWidget {
                 decoration: BoxDecoration(
                   color: statusBg,
                   borderRadius: BorderRadius.circular(999),
-                  border: Border.all(color: statusColor.withOpacity(0.22)),
+                  border: Border.all(color: statusColor.withValues(alpha: 0.22)),
                 ),
                 child: Text(
-                  person.isActive ? 'Active' : 'Inactive',
+                  isActive ? 'Active' : 'Inactive',
                   style: TextStyle(fontSize: 12, fontWeight: FontWeight.w800, color: statusColor),
                 ),
               ),
@@ -224,11 +226,11 @@ class _PersonCard extends StatelessWidget {
           const SizedBox(height: 12),
           Row(
             children: [
-              Icon(Icons.schedule_rounded, size: 16, color: Colors.black.withOpacity(0.45)),
+              Icon(Icons.schedule_rounded, size: 16, color: Colors.black.withValues(alpha: 0.45)),
               const SizedBox(width: 6),
               Text(
-                'Last active: ${person.lastActive}',
-                style: TextStyle(fontSize: 12.5, color: Colors.black.withOpacity(0.65), fontWeight: FontWeight.w600),
+                isActive ? 'Logged in right now' : 'Waiting for sign in',
+                style: TextStyle(fontSize: 12.5, color: Colors.black.withValues(alpha: 0.65), fontWeight: FontWeight.w600),
               ),
             ],
           ),
@@ -237,19 +239,19 @@ class _PersonCard extends StatelessWidget {
             spacing: 8,
             runSpacing: 8,
             children: [
-              ...person.assignedElders.map(
-                (e) => Container(
+              ...const ['Dashboard', 'Elders', 'Medicines', 'Alerts', 'Music'].map(
+                (label) => Container(
                   padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
                   decoration: BoxDecoration(
-                    color: person.roleColor.withOpacity(0.10),
+                    color: Colors.teal.withValues(alpha: 0.10),
                     borderRadius: BorderRadius.circular(999),
-                    border: Border.all(color: person.roleColor.withOpacity(0.18)),
+                    border: Border.all(color: Colors.teal.withValues(alpha: 0.18)),
                   ),
                   child: Text(
-                    e,
+                    label,
                     style: TextStyle(
                       fontSize: 12,
-                      color: Colors.black.withOpacity(0.75),
+                      color: Colors.black.withValues(alpha: 0.75),
                       fontWeight: FontWeight.w700,
                     ),
                   ),
@@ -286,10 +288,10 @@ class _RoleCard extends StatelessWidget {
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: Colors.black.withOpacity(0.04)),
+        border: Border.all(color: Colors.black.withValues(alpha: 0.04)),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withOpacity(0.06),
+            color: Colors.black.withValues(alpha: 0.06),
             blurRadius: 12,
             offset: const Offset(0, 4),
           ),
@@ -303,7 +305,7 @@ class _RoleCard extends StatelessWidget {
               Container(
                 padding: const EdgeInsets.all(10),
                 decoration: BoxDecoration(
-                  color: color.withOpacity(0.15),
+                  color: color.withValues(alpha: 0.15),
                   borderRadius: BorderRadius.circular(12),
                 ),
                 child: Icon(icon, color: color, size: 22),
@@ -324,7 +326,7 @@ class _RoleCard extends StatelessWidget {
                     const SizedBox(height: 2),
                     Text(
                       subtitle,
-                      style: TextStyle(fontSize: 13, color: Colors.black.withOpacity(0.60)),
+                      style: TextStyle(fontSize: 13, color: Colors.black.withValues(alpha: 0.60)),
                     ),
                   ],
                 ),
@@ -340,15 +342,15 @@ class _RoleCard extends StatelessWidget {
                   (p) => Container(
                     padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
                     decoration: BoxDecoration(
-                      color: color.withOpacity(0.10),
+                      color: color.withValues(alpha: 0.10),
                       borderRadius: BorderRadius.circular(999),
-                      border: Border.all(color: color.withOpacity(0.18)),
+                      border: Border.all(color: color.withValues(alpha: 0.18)),
                     ),
                     child: Text(
                       p,
                       style: TextStyle(
                         fontSize: 12,
-                        color: Colors.black.withOpacity(0.75),
+                        color: Colors.black.withValues(alpha: 0.75),
                         fontWeight: FontWeight.w600,
                       ),
                     ),
@@ -361,78 +363,3 @@ class _RoleCard extends StatelessWidget {
     );
   }
 }
-
-const _people = <_Person>[
-  _Person(
-    name: 'Aisha Rahman',
-    role: 'Admin',
-    isActive: true,
-    lastActive: 'Today, 9:12 AM',
-    assignedElders: ['System', 'All Facilities'],
-    roleColor: AdminRolesScreen._deepMint,
-    roleIcon: Icons.admin_panel_settings_rounded,
-  ),
-  _Person(
-    name: 'Daniel Okafor',
-    role: 'Admin',
-    isActive: true,
-    lastActive: 'Yesterday, 6:48 PM',
-    assignedElders: ['Reports', 'Audit'],
-    roleColor: AdminRolesScreen._deepMint,
-    roleIcon: Icons.admin_panel_settings_rounded,
-  ),
-  _Person(
-    name: 'Meera Patel',
-    role: 'Nurse',
-    isActive: true,
-    lastActive: 'Today, 10:05 AM',
-    assignedElders: ['Elder: Fatima A.', 'Elder: Joseph K.'],
-    roleColor: Colors.teal,
-    roleIcon: Icons.medical_services_rounded,
-  ),
-  _Person(
-    name: 'Lucas Nguyen',
-    role: 'Nurse',
-    isActive: false,
-    lastActive: '3 days ago',
-    assignedElders: ['Elder: Maria S.'],
-    roleColor: Colors.teal,
-    roleIcon: Icons.medical_services_rounded,
-  ),
-  _Person(
-    name: 'Grace Mensah',
-    role: 'Caretaker',
-    isActive: true,
-    lastActive: 'Today, 8:41 AM',
-    assignedElders: ['Elder: Ahmed R.', 'Elder: Lila N.', 'Elder: Sofia T.'],
-    roleColor: Colors.green,
-    roleIcon: Icons.volunteer_activism_rounded,
-  ),
-  _Person(
-    name: 'Hassan Ali',
-    role: 'Caretaker',
-    isActive: true,
-    lastActive: 'Today, 7:55 AM',
-    assignedElders: ['Elder: Peter M.', 'Elder: Sunita P.'],
-    roleColor: Colors.green,
-    roleIcon: Icons.volunteer_activism_rounded,
-  ),
-  _Person(
-    name: 'Chloe Martin',
-    role: 'Supervisor',
-    isActive: true,
-    lastActive: 'Today, 9:35 AM',
-    assignedElders: ['Wing A', 'Wing B'],
-    roleColor: Colors.indigo,
-    roleIcon: Icons.supervisor_account_rounded,
-  ),
-  _Person(
-    name: 'Omar Hassan',
-    role: 'Supervisor',
-    isActive: false,
-    lastActive: '1 week ago',
-    assignedElders: ['Night Shift'],
-    roleColor: Colors.indigo,
-    roleIcon: Icons.supervisor_account_rounded,
-  ),
-];

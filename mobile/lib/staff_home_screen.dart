@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'services/staff_users_storage.dart';
+import 'staff_gate_nav.dart';
 import 'dashboard_screen.dart';
 import 'elders_screen.dart';
 import 'medicines_screen.dart';
@@ -24,8 +26,17 @@ class _StaffHomeScreenState extends State<StaffHomeScreen> {
   void initState() {
     super.initState();
     _loadStaffName();
+    WidgetsBinding.instance.addPostFrameCallback((_) => _ensureValidSessionOrLeave());
     // Track screen view
     AnalyticsService.logScreenView('staff_home');
+  }
+
+  /// If session flags are inconsistent (e.g. missing user for [current_staff_id]), clear and re-auth.
+  Future<void> _ensureValidSessionOrLeave() async {
+    final prefs = await SharedPreferences.getInstance();
+    final user = await StaffUsersStorage.validateSessionOrReturnUser(prefs);
+    if (!mounted || user != null) return;
+    await replaceRouteAfterStaffLogout(context);
   }
 
   @override
@@ -36,8 +47,14 @@ class _StaffHomeScreenState extends State<StaffHomeScreen> {
 
   Future<void> _loadStaffName() async {
     final prefs = await SharedPreferences.getInstance();
+    final user = await StaffUsersStorage.resolveCurrentUser(prefs);
+    if (!mounted) return;
     setState(() {
-      _staffName = prefs.getString('staff_name') ?? prefs.getString('staff_username');
+      if (user == null) {
+        _staffName = null;
+      } else {
+        _staffName = user.name.isNotEmpty ? user.name : user.username;
+      }
     });
   }
 
@@ -50,7 +67,10 @@ class _StaffHomeScreenState extends State<StaffHomeScreen> {
         children: [
           DashboardScreen(staffName: _staffName),
           EldersScreen(staffName: _staffName),
-          MedicinesScreen(staffName: _staffName),
+          MedicinesScreen(
+            staffName: _staffName,
+            isActiveTab: _currentIndex == 2,
+          ),
           AlertsScreen(staffName: _staffName),
           MusicScreen(staffName: _staffName),
         ],

@@ -27,34 +27,6 @@ class SettingsScreen extends StatelessWidget {
       ),
       child: Stack(
         children: [
-          // Back button top-most
-          Positioned(
-            top: 20,
-            left: 20,
-            child: Material(
-              color: Colors.transparent,
-              child: InkWell(
-                onTap: onBackTap,
-                borderRadius: BorderRadius.circular(25),
-                splashColor: Colors.white.withOpacity(0.3),
-                highlightColor: Colors.white.withOpacity(0.2),
-                child: Container(
-                  padding: const EdgeInsets.all(10),
-                  decoration: BoxDecoration(
-                    color: Colors.black.withOpacity(0.35),
-                    shape: BoxShape.circle,
-                    border: Border.all(color: Colors.white.withOpacity(0.8), width: 1.5),
-                  ),
-                  child: const Icon(
-                    Icons.arrow_back_ios,
-                    color: Colors.white,
-                    size: 22,
-                  ),
-                ),
-              ),
-            ),
-          ),
-          // Content
           Center(
             child: SizedBox(
               width: 320,
@@ -124,6 +96,32 @@ class SettingsScreen extends StatelessWidget {
                       ),
                     ),
                   ],
+                ),
+              ),
+            ),
+          ),
+          Positioned(
+            top: 20,
+            left: 20,
+            child: Material(
+              color: Colors.transparent,
+              child: InkWell(
+                onTap: onBackTap,
+                borderRadius: BorderRadius.circular(25),
+                splashColor: Colors.white.withOpacity(0.3),
+                highlightColor: Colors.white.withOpacity(0.2),
+                child: Container(
+                  padding: const EdgeInsets.all(10),
+                  decoration: BoxDecoration(
+                    color: Colors.black.withOpacity(0.35),
+                    shape: BoxShape.circle,
+                    border: Border.all(color: Colors.white.withOpacity(0.8), width: 1.5),
+                  ),
+                  child: const Icon(
+                    Icons.arrow_back_ios,
+                    color: Colors.white,
+                    size: 22,
+                  ),
                 ),
               ),
             ),

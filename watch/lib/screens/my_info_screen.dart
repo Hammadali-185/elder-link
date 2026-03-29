@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../services/api_service.dart';
+import '../services/medicine_schedule_monitor.dart';
 
 class MyInfoScreen extends StatefulWidget {
   final VoidCallback? onBackTap;
@@ -58,8 +59,10 @@ class _MyInfoScreenState extends State<MyInfoScreen> {
     super.dispose();
   }
 
-  void _saveInfo() {
+  Future<void> _saveInfo() async {
     if (_formKey.currentState?.validate() ?? false) {
+      final previousName = ApiService.userName?.trim() ?? '';
+      final newName = _nameCtrl.text.trim();
       ApiService.updateUserInfo(
         name: _nameCtrl.text,
         gender: _gender,
@@ -67,6 +70,11 @@ class _MyInfoScreenState extends State<MyInfoScreen> {
         disease: _diseaseCtrl.text,
         roomNumber: _roomNumberCtrl.text,
       );
+      if (previousName != newName) {
+        MedicineScheduleMonitor.instance.onUserIdentityChanged();
+      }
+      await ApiService.syncElderProfileToServer();
+      if (!mounted) return;
       setState(() {
         _saved = true;
       });
@@ -138,7 +146,7 @@ class _MyInfoScreenState extends State<MyInfoScreen> {
                             SizedBox(
                               width: double.infinity,
                               child: ElevatedButton(
-                                onPressed: _saveInfo,
+                                onPressed: () => _saveInfo(),
                                 style: ElevatedButton.styleFrom(
                                   backgroundColor: Colors.orange,
                                   padding: const EdgeInsets.symmetric(vertical: 14),

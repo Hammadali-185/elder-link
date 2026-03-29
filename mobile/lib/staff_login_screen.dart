@@ -2,11 +2,22 @@ import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:image_picker/image_picker.dart';
+import 'services/staff_users_storage.dart';
 import 'staff_home_screen.dart';
 import 'widgets/avatar_storage_io.dart' if (dart.library.html) 'widgets/avatar_storage_web.dart' as avatar_storage;
 
 class StaffLoginScreen extends StatefulWidget {
-  const StaffLoginScreen({super.key});
+  /// When this screen is the app root (e.g. after logout), back goes to welcome instead of popping.
+  final VoidCallback? onRootBack;
+  final String? initialUsername;
+  final bool initialSignUp;
+
+  const StaffLoginScreen({
+    super.key,
+    this.onRootBack,
+    this.initialUsername,
+    this.initialSignUp = false,
+  });
 
   @override
   State<StaffLoginScreen> createState() => _StaffLoginScreenState();
@@ -19,10 +30,20 @@ class _StaffLoginScreenState extends State<StaffLoginScreen> {
   final _passwordController = TextEditingController();
   bool _isPasswordVisible = false;
   bool _isLoading = false;
-  bool _isSignUp = false; // Default to Log In
+  late bool _isSignUp;
   String _selectedGender = 'Male'; // Male or Female for Sign Up
   Uint8List? _avatarImageBytes;
   final ImagePicker _picker = ImagePicker();
+
+  @override
+  void initState() {
+    super.initState();
+    _isSignUp = widget.initialSignUp;
+    final u = widget.initialUsername?.trim();
+    if (u != null && u.isNotEmpty) {
+      _usernameController.text = u;
+    }
+  }
 
   @override
   void dispose() {
@@ -76,12 +97,10 @@ class _StaffLoginScreenState extends State<StaffLoginScreen> {
         final prefs = await SharedPreferences.getInstance();
         
         if (_isSignUp) {
-          // Sign Up: Save new user
           final name = _nameController.text.trim();
           final username = _usernameController.text.trim();
           final password = _passwordController.text.trim();
-          
-          // Validate inputs
+
           if (name.isEmpty || username.isEmpty || password.isEmpty) {
             if (mounted) {
               ScaffoldMessenger.of(context).showSnackBar(
@@ -93,49 +112,76 @@ class _StaffLoginScreenState extends State<StaffLoginScreen> {
             }
             return;
           }
-          
-          // Save credentials and avatar (gender + optional photo)
-          final nameResult = await prefs.setString('staff_name', name);
-          final usernameResult = await prefs.setString('staff_username', username);
-          final passwordResult = await prefs.setString('staff_password', password);
-          final loginResult = await prefs.setBool('staff_logged_in', true);
-          await prefs.setString('staff_avatar', _avatarImageBytes != null ? 'custom' : _selectedGender.toLowerCase());
-          if (_avatarImageBytes == null) {
+
+          await prefs.reload();
+
+          final avatar =
+              _avatarImageBytes != null ? 'custom' : _selectedGender.toLowerCase();
+          final newUser = StaffUser(
+            id: '',
+            username: username,
+            password: password,
+            name: name,
+            avatar: avatar,
+          );
+
+          final duplicateMsg = await StaffUsersStorage.addUser(prefs, newUser);
+          if (duplicateMsg != null) {
+            if (mounted) {
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(
+                  content: Text(duplicateMsg),
+                  backgroundColor: Colors.red,
+                ),
+              );
+            }
+            return;
+          }
+
+          if (avatar != 'custom') {
             await prefs.remove('staff_avatar_image_path');
             await prefs.remove('staff_avatar_image_base64');
           }
-          
-          print('Sign up - Save operation results:');
-          print('Name save result: $nameResult');
-          print('Username save result: $usernameResult');
-          print('Password save result: $passwordResult');
-          print('Login flag save result: $loginResult');
-          
-          // Reload to ensure data is persisted (important for web)
+
           await prefs.reload();
-          
-          // Small delay to ensure persistence (especially for web)
+          final usersForSession = await StaffUsersStorage.getUsers(prefs);
+          final savedUser = StaffUsersStorage.findByCredentials(
+            usersForSession,
+            username,
+            password,
+          );
+          if (savedUser == null) {
+            if (mounted) {
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(
+                  content: Text('Failed to save account. Please try again.'),
+                  backgroundColor: Colors.red,
+                  duration: Duration(seconds: 3),
+                ),
+              );
+            }
+            return;
+          }
+          if (avatar == 'custom') {
+            await StaffUsersStorage.copyGlobalCustomAvatarToUser(
+              prefs,
+              savedUser.id,
+            );
+          }
+          await StaffUsersStorage.applySession(prefs, savedUser);
+
+          await prefs.reload();
           await Future.delayed(const Duration(milliseconds: 100));
-          
-          // Get a fresh instance to verify save
           final verifyPrefs = await SharedPreferences.getInstance();
           await verifyPrefs.reload();
-          
-          // Debug: Verify save
-          print('Sign up - Verification after save:');
-          print('All keys: ${verifyPrefs.getKeys()}');
-          print('Name saved: ${verifyPrefs.getString('staff_name')}');
-          print('Username saved: ${verifyPrefs.getString('staff_username')}');
-          print('Password saved: ${verifyPrefs.getString('staff_password') != null}');
-          print('Login flag saved: ${verifyPrefs.getBool('staff_logged_in')}');
-          
-          // Double-check that data was actually saved
-          final savedName = verifyPrefs.getString('staff_name');
-          final savedUsername = verifyPrefs.getString('staff_username');
-          final savedPassword = verifyPrefs.getString('staff_password');
-          
-          if (savedName == null || savedUsername == null || savedPassword == null) {
-            print('ERROR: Data was not saved properly!');
+
+          final users = await StaffUsersStorage.getUsers(verifyPrefs);
+          final ok = users.any(
+            (u) => u.username == username && u.password == password,
+          );
+          print('Sign up - staff_users count: ${users.length}, verified: $ok');
+
+          if (!ok) {
             if (mounted) {
               ScaffoldMessenger.of(context).showSnackBar(
                 const SnackBar(
@@ -148,27 +194,6 @@ class _StaffLoginScreenState extends State<StaffLoginScreen> {
             return;
           }
 
-          // Additional verification: Try one more time with a fresh instance
-          await Future.delayed(const Duration(milliseconds: 200));
-          final finalCheck = await SharedPreferences.getInstance();
-          await finalCheck.reload();
-          
-          if (finalCheck.getString('staff_username') != username) {
-            print('ERROR: Data verification failed on final check!');
-            if (mounted) {
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(
-                  content: Text('Data persistence issue. Please try again.'),
-                  backgroundColor: Colors.red,
-                  duration: Duration(seconds: 3),
-                ),
-              );
-            }
-            return;
-          }
-
-          print('✅ Sign up successful - Data verified and persisted');
-          
           if (mounted) {
             ScaffoldMessenger.of(context).showSnackBar(
               const SnackBar(
@@ -176,63 +201,43 @@ class _StaffLoginScreenState extends State<StaffLoginScreen> {
                 backgroundColor: Color(0xFF17A2A2),
               ),
             );
-            // Use pushAndRemoveUntil to ensure clean navigation
             Navigator.of(context).pushAndRemoveUntil(
               MaterialPageRoute(builder: (_) => const StaffHomeScreen()),
               (route) => false,
             );
           }
         } else {
-          // Log In: Verify credentials
           final enteredUsername = _usernameController.text.trim();
           final enteredPassword = _passwordController.text.trim();
-          
-          // Get fresh instance to ensure we have latest data
+
           final freshPrefs = await SharedPreferences.getInstance();
-          await freshPrefs.reload(); // Reload to get latest data
-          
-          final savedUsername = freshPrefs.getString('staff_username');
-          final savedPassword = freshPrefs.getString('staff_password');
+          await freshPrefs.reload();
 
-          // Debug: Print values for troubleshooting
-          print('Login attempt:');
-          print('Saved username: "$savedUsername"');
-          print('Entered username: "$enteredUsername"');
-          print('Saved password exists: ${savedPassword != null}');
-          print('Entered password length: ${enteredPassword.length}');
-          print('Saved password length: ${savedPassword?.length ?? 0}');
-          print('All keys: ${freshPrefs.getKeys()}');
+          final users = await StaffUsersStorage.getUsers(freshPrefs);
 
-          // Check if account exists
-          if (savedUsername == null || savedUsername.isEmpty || 
-              savedPassword == null || savedPassword.isEmpty) {
+          print('Login attempt: ${users.length} local account(s)');
+
+          if (users.isEmpty) {
             if (mounted) {
               ScaffoldMessenger.of(context).showSnackBar(
-                SnackBar(
-                  content: Text('No account found. Please sign up first.\nSaved keys: ${freshPrefs.getKeys()}'),
+                const SnackBar(
+                  content: Text(
+                    'No account found. Please create an account first.',
+                  ),
                   backgroundColor: Colors.red,
-                  duration: const Duration(seconds: 4),
+                  duration: Duration(seconds: 3),
                 ),
               );
             }
           } else {
-            // Compare trimmed values
-            final savedUserTrimmed = savedUsername.trim();
-            final savedPassTrimmed = savedPassword.trim();
-            
-            print('Comparing:');
-            print('  Saved username: "$savedUserTrimmed"');
-            print('  Entered username: "$enteredUsername"');
-            print('  Match: ${savedUserTrimmed == enteredUsername}');
-            print('  Saved password: "${savedPassTrimmed.substring(0, savedPassTrimmed.length > 3 ? 3 : savedPassTrimmed.length)}..."');
-            print('  Entered password: "${enteredPassword.substring(0, enteredPassword.length > 3 ? 3 : enteredPassword.length)}..."');
-            print('  Match: ${savedPassTrimmed == enteredPassword}');
-            
-            if (savedUserTrimmed == enteredUsername && 
-                savedPassTrimmed == enteredPassword) {
-              // Credentials match - login successful
-              await freshPrefs.setBool('staff_logged_in', true);
+            final match = StaffUsersStorage.findByCredentials(
+              users,
+              enteredUsername,
+              enteredPassword,
+            );
 
+            if (match != null) {
+              await StaffUsersStorage.applySession(freshPrefs, match);
               if (mounted) {
                 ScaffoldMessenger.of(context).showSnackBar(
                   const SnackBar(
@@ -245,14 +250,10 @@ class _StaffLoginScreenState extends State<StaffLoginScreen> {
                 );
               }
             } else {
-              // Credentials don't match - show more detailed error
-              String errorMsg = 'Invalid credentials';
-              if (savedUserTrimmed != enteredUsername) {
-                errorMsg = 'Username does not match';
-              } else if (savedPassTrimmed != enteredPassword) {
-                errorMsg = 'Password does not match';
-              }
-              
+              final byUser = users.any((u) => u.username == enteredUsername);
+              final errorMsg = byUser
+                  ? 'Password does not match'
+                  : 'Invalid credentials';
               if (mounted) {
                 ScaffoldMessenger.of(context).showSnackBar(
                   SnackBar(
@@ -295,7 +296,13 @@ class _StaffLoginScreenState extends State<StaffLoginScreen> {
         elevation: 2,
         leading: IconButton(
           icon: const Icon(Icons.arrow_back_ios, color: Colors.black87, size: 22),
-          onPressed: () => Navigator.of(context).pop(),
+          onPressed: () {
+            if (widget.onRootBack != null) {
+              widget.onRootBack!();
+            } else {
+              Navigator.of(context).pop();
+            }
+          },
         ),
         title: Text(
           _isSignUp ? 'Staff Sign Up' : 'Staff Log In',

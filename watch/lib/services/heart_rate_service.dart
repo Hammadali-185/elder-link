@@ -1,13 +1,6 @@
 import 'dart:async';
 import 'package:flutter/services.dart';
 
-/// Heart Rate Service with automatic sensor detection
-/// 
-/// Automatically detects if a real heart-rate sensor exists:
-/// - Uses real sensor data when available
-/// - Falls back to mock data (40-130 bpm) when sensor is not available
-/// - Updates every 3 seconds
-/// - Detects abnormal values (< 50 or > 110 bpm)
 class HeartRateService {
   static const MethodChannel _methodChannel = MethodChannel('heart_rate/methods');
   static const EventChannel _eventChannel = EventChannel('heart_rate/stream');
@@ -23,16 +16,15 @@ class HeartRateService {
   static Function(int)? onAbnormalHeartRate;
   
   /// Check if heart-rate sensor is available
-  /// Returns true if real sensor exists, false if using mock data
   static Future<bool> checkSensorAvailability() async {
     try {
       final result = await _methodChannel.invokeMethod<bool>('checkSensor');
       _isSensorAvailable = result ?? false;
       
       if (_isSensorAvailable == true) {
-        print('Heart rate sensor detected — using real data');
+        print('Heart rate sensor detected');
       } else {
-        print('Heart rate sensor NOT available — using mock data');
+        print('Heart rate sensor NOT available');
       }
       
       return _isSensorAvailable ?? false;
@@ -42,9 +34,29 @@ class HeartRateService {
       return false;
     }
   }
+
+  static Future<bool> checkPermissions() async {
+    try {
+      return await _methodChannel.invokeMethod<bool>('checkPermissions') ?? false;
+    } catch (e) {
+      print('Error checking heart-rate permissions: $e');
+      return false;
+    }
+  }
+
+  static Future<bool> ensurePermissions() async {
+    try {
+      return await _methodChannel.invokeMethod<bool>('ensurePermissions') ?? false;
+    } on PlatformException catch (e) {
+      print('Error requesting heart-rate permissions: ${e.code} ${e.message}');
+      return false;
+    } catch (e) {
+      print('Error requesting heart-rate permissions: $e');
+      return false;
+    }
+  }
   
   /// Start monitoring heart rate
-  /// Automatically uses real sensor if available, otherwise uses mock data
   static Future<void> startMonitoring() async {
     if (_isMonitoring) {
       print('Heart rate monitoring already started');
@@ -59,6 +71,10 @@ class HeartRateService {
     try {
       // Start monitoring on native side
       await _methodChannel.invokeMethod('startMonitoring');
+      _isMonitoring = true;
+
+      await _subscription?.cancel();
+      _subscription = null;
       
       // Listen to heart rate stream
       _subscription = _eventChannel
@@ -84,19 +100,20 @@ class HeartRateService {
             cancelOnError: false,
           );
       
-      print('Heart rate monitoring started (${_isSensorAvailable == true ? "real sensor" : "mock data"})');
+      print('Heart rate monitoring started');
+    } on PlatformException catch (e) {
+      print('Error starting heart rate monitoring: ${e.code} ${e.message}');
+      _isMonitoring = false;
+      rethrow;
     } catch (e) {
       print('Error starting heart rate monitoring: $e');
       _isMonitoring = false;
+      rethrow;
     }
   }
   
   /// Stop monitoring heart rate
   static Future<void> stopMonitoring() async {
-    if (!_isMonitoring) {
-      return;
-    }
-    
     try {
       await _methodChannel.invokeMethod('stopMonitoring');
       await _subscription?.cancel();

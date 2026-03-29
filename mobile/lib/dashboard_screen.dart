@@ -24,14 +24,14 @@ class _DashboardScreenState extends State<DashboardScreen> {
   bool _isLoading = true;
   String? _error;
   Timer? _refreshTimer;
-
+  MusicDashboardSummary? _musicSummary;
+  String? _musicLoadNote;
   @override
   void initState() {
     super.initState();
     _loadReadings();
     AnalyticsService.logScreenView('dashboard');
-    // Refresh every 10 seconds for real-time updates
-    _refreshTimer = Timer.periodic(const Duration(seconds: 10), (_) {
+    _refreshTimer = Timer.periodic(const Duration(seconds: 15), (_) {
       _loadReadings();
     });
   }
@@ -46,7 +46,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
     try {
       // Update activity for auto-lock
       AutoLockService.updateActivity();
-      
+
       final readings = await ApiService.getAllReadings();
       if (mounted) {
         setState(() {
@@ -75,6 +75,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
               personName: personName,
               status: reading.status,
               bp: reading.bp,
+              heartRate: reading.heartRate,
               timestamp: reading.timestamp,
             );
             _notifiedReadings.add(reading.id);
@@ -86,6 +87,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
           final latestReading = readings.first;
           await DataSharingService.shareAnonymizedData({
             'bp': latestReading.bp,
+            'heartRate': latestReading.heartRate,
             'status': latestReading.status,
             'timestamp': latestReading.timestamp.toIso8601String(),
           });
@@ -99,6 +101,238 @@ class _DashboardScreenState extends State<DashboardScreen> {
         });
       }
     }
+  }
+
+  String _formatListenDuration(int totalSeconds) {
+    if (totalSeconds <= 0) return '0m';
+    final h = totalSeconds ~/ 3600;
+    final m = (totalSeconds % 3600) ~/ 60;
+    final s = totalSeconds % 60;
+    if (h > 0) return '${h}h ${m}m';
+    if (m > 0) return '${m}m ${s}s';
+    return '${s}s';
+  }
+
+  // ignore: unused_element
+  Widget _buildMusicAnalyticsSection(Color deepMint) {
+    final m = _musicSummary;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            Icon(Icons.headphones, color: deepMint, size: 22),
+            const SizedBox(width: 8),
+            const Text(
+              'Music activity (elders)',
+              style: TextStyle(
+                fontSize: 20,
+                fontWeight: FontWeight.w700,
+                color: Colors.black87,
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 4),
+        Text(
+          m != null
+              ? 'Updates every ~15s · times in UTC'
+              : (_musicLoadNote ?? 'Loading…'),
+          style: TextStyle(fontSize: 12, color: Colors.black.withOpacity(0.55)),
+        ),
+        const SizedBox(height: 12),
+        if (m != null) ...[
+          Row(
+            children: [
+              Expanded(
+                child: _buildStatCard(
+                  'Listening now',
+                  '${m.activeListenersCount}',
+                  Icons.hearing,
+                  deepMint,
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: _buildStatCard(
+                  'Top category (today)',
+                  m.mostPlayedCategory != null
+                      ? m.mostPlayedCategory!.replaceAll('_', ' ')
+                      : '—',
+                  Icons.category,
+                  Colors.deepPurple,
+                ),
+              ),
+            ],
+          ),
+          if (m.mostPlayedCategorySeconds != null &&
+              m.mostPlayedCategorySeconds! > 0) ...[
+            const SizedBox(height: 6),
+            Text(
+              'Top category time today: ${_formatListenDuration(m.mostPlayedCategorySeconds!)}',
+              style: TextStyle(fontSize: 12, color: Colors.black.withOpacity(0.6)),
+            ),
+          ],
+          const SizedBox(height: 16),
+          const Text(
+            'Now playing',
+            style: TextStyle(
+              fontSize: 16,
+              fontWeight: FontWeight.w600,
+              color: Colors.black87,
+            ),
+          ),
+          const SizedBox(height: 8),
+          if (m.nowPlaying.isEmpty)
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: Colors.grey.shade200),
+              ),
+              child: Text(
+                'No active listeners',
+                style: TextStyle(color: Colors.black.withOpacity(0.5)),
+              ),
+            )
+          else
+            ...m.nowPlaying.map((n) => Padding(
+                  padding: const EdgeInsets.only(bottom: 8),
+                  child: Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.all(14),
+                    decoration: BoxDecoration(
+                      color: Colors.white,
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(color: deepMint.withOpacity(0.35), width: 1.5),
+                      boxShadow: [
+                        BoxShadow(
+                          color: Colors.black.withOpacity(0.04),
+                          blurRadius: 8,
+                          offset: const Offset(0, 2),
+                        ),
+                      ],
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          n.elderName,
+                          style: const TextStyle(
+                            fontWeight: FontWeight.w700,
+                            fontSize: 15,
+                            color: Colors.black87,
+                          ),
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          n.title,
+                          style: TextStyle(
+                            fontSize: 14,
+                            color: Colors.black.withOpacity(0.85),
+                          ),
+                        ),
+                        if (n.artist.isNotEmpty)
+                          Text(
+                            n.artist,
+                            style: TextStyle(
+                              fontSize: 12,
+                              color: Colors.black.withOpacity(0.5),
+                            ),
+                          ),
+                        const SizedBox(height: 4),
+                        Text(
+                          'Category: ${n.category.replaceAll('_', ' ')} · Started ${n.playStart.toUtc().toIso8601String().substring(11, 19)} UTC',
+                          style: TextStyle(
+                            fontSize: 11,
+                            color: Colors.black.withOpacity(0.45),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                )),
+          const SizedBox(height: 16),
+          const Text(
+            'Listening today (per elder)',
+            style: TextStyle(
+              fontSize: 16,
+              fontWeight: FontWeight.w600,
+              color: Colors.black87,
+            ),
+          ),
+          const SizedBox(height: 8),
+          if (m.listeningTodaySecondsByElder.isEmpty)
+            Text(
+              'No sessions started yet today (UTC)',
+              style: TextStyle(fontSize: 13, color: Colors.black.withOpacity(0.5)),
+            )
+          else
+            ...m.listeningTodaySecondsByElder.map((e) => Padding(
+                  padding: const EdgeInsets.only(bottom: 6),
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          e.elderName,
+                          style: const TextStyle(
+                            fontWeight: FontWeight.w500,
+                            fontSize: 14,
+                          ),
+                        ),
+                      ),
+                      Text(
+                        _formatListenDuration(e.totalSeconds),
+                        style: TextStyle(
+                          fontSize: 14,
+                          fontWeight: FontWeight.w600,
+                          color: deepMint,
+                        ),
+                      ),
+                    ],
+                  ),
+                )),
+          const SizedBox(height: 16),
+          const Text(
+            'Last played (any track)',
+            style: TextStyle(
+              fontSize: 16,
+              fontWeight: FontWeight.w600,
+              color: Colors.black87,
+            ),
+          ),
+          const SizedBox(height: 8),
+          if (m.lastPlayedByElder.isEmpty)
+            Text(
+              'No history yet',
+              style: TextStyle(fontSize: 13, color: Colors.black.withOpacity(0.5)),
+            )
+          else
+            ...m.lastPlayedByElder.take(8).map((e) => Padding(
+                  padding: const EdgeInsets.only(bottom: 6),
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          e.elderName,
+                          style: const TextStyle(fontSize: 14),
+                        ),
+                      ),
+                      Text(
+                        e.lastPlayedAt.toUtc().toIso8601String().replaceFirst('T', ' ').substring(0, 19),
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: Colors.black.withOpacity(0.5),
+                        ),
+                      ),
+                    ],
+                  ),
+                )),
+        ],
+      ],
+    );
   }
 
   String _getGreeting() {
@@ -144,6 +378,20 @@ class _DashboardScreenState extends State<DashboardScreen> {
     }
   }
 
+  String _formatReadingSummary(Reading reading) {
+    final parts = <String>[];
+    if (reading.bp > 0) {
+      parts.add('BP: ${reading.bp}');
+    }
+    if (reading.heartRate > 0) {
+      parts.add('HR: ${reading.heartRate} BPM');
+    }
+    if (parts.isEmpty) {
+      return 'No vitals';
+    }
+    return parts.join(' · ');
+  }
+
   @override
   Widget build(BuildContext context) {
     const mint = Color(0xFF90EE90);
@@ -176,11 +424,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
                 : const Icon(Icons.refresh, color: Colors.white),
             onPressed: _isLoading ? null : _loadReadings,
           ),
-          const Icon(Icons.man, size: 20, color: Colors.white),
-          const SizedBox(width: 8),
-          const Icon(Icons.woman, size: 20, color: Colors.white),
           Padding(
-            padding: const EdgeInsets.only(right: 16, left: 8),
+            padding: const EdgeInsets.only(right: 16),
             child: GestureDetector(
               onTap: () {
                 Navigator.of(context).push(
@@ -458,6 +703,28 @@ class _DashboardScreenState extends State<DashboardScreen> {
                                 ),
                               ],
                             ),
+                            const SizedBox(height: 12),
+                            Row(
+                              children: [
+                                Expanded(
+                                  child: _buildBPStatCard(
+                                    'Avg HR',
+                                    _getAverageHeartRate(),
+                                    Icons.favorite,
+                                    Colors.pink,
+                                  ),
+                                ),
+                                const SizedBox(width: 12),
+                                Expanded(
+                                  child: _buildBPStatCard(
+                                    'Latest HR',
+                                    _getLatestHeartRate(),
+                                    Icons.monitor_heart_outlined,
+                                    _getLatestHeartRateColor(),
+                                  ),
+                                ),
+                              ],
+                            ),
                             const SizedBox(height: 24),
                             // BP Trend by Elder
                             if (_getElderBPData().isNotEmpty) ...[
@@ -471,6 +738,19 @@ class _DashboardScreenState extends State<DashboardScreen> {
                               ),
                               const SizedBox(height: 8),
                               ..._getElderBPData().map((data) => _buildElderBPCard(data)),
+                              const SizedBox(height: 16),
+                            ],
+                            if (_getElderHeartRateData().isNotEmpty) ...[
+                              const Text(
+                                'Heart Rate by Elder',
+                                style: TextStyle(
+                                  fontSize: 16,
+                                  fontWeight: FontWeight.w600,
+                                  color: Colors.black87,
+                                ),
+                              ),
+                              const SizedBox(height: 8),
+                              ..._getElderHeartRateData().map((data) => _buildElderHeartRateCard(data)),
                               const SizedBox(height: 16),
                             ],
                             // Abnormal Activity Graph
@@ -536,11 +816,11 @@ class _DashboardScreenState extends State<DashboardScreen> {
                               } else if (reading.status == 'abnormal') {
                                 icon = Icons.warning;
                                 iconColor = Colors.orange;
-                                title = 'Abnormal reading — ${reading.personName ?? reading.username} (BP: ${reading.bp})';
+                                title = 'Abnormal reading — ${reading.personName ?? reading.username} (${_formatReadingSummary(reading)})';
                               } else {
                                 icon = Icons.favorite;
                                 iconColor = Colors.green;
-                                title = 'Normal reading — ${reading.personName ?? reading.username} (BP: ${reading.bp})';
+                                title = 'Normal reading — ${reading.personName ?? reading.username} (${_formatReadingSummary(reading)})';
                               }
 
                               return Padding(
@@ -870,6 +1150,144 @@ class _DashboardScreenState extends State<DashboardScreen> {
     );
   }
 
+  Widget _buildElderHeartRateCard(Map<String, dynamic> data) {
+    final elderName = data['elderName'] as String;
+    final latestHeartRate = data['latestHeartRate'] as int;
+    final avgHeartRate = data['avgHeartRate'] as int;
+    final status = data['status'] as String;
+    final roomNumber = data['roomNumber'] as String?;
+    final timestamp = data['timestamp'] as DateTime;
+
+    final heartRateColor =
+        latestHeartRate < 50 || latestHeartRate > 110 ? Colors.orange : Colors.pink;
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: 10),
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(
+          color: heartRateColor.withOpacity(0.3),
+          width: 1.5,
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.06),
+            blurRadius: 20,
+            offset: const Offset(0, 6),
+          ),
+        ],
+      ),
+      child: Row(
+        children: [
+          Container(
+            padding: const EdgeInsets.all(10),
+            decoration: BoxDecoration(
+              color: heartRateColor.withOpacity(0.15),
+              borderRadius: BorderRadius.circular(10),
+            ),
+            child: Icon(
+              Icons.favorite,
+              color: heartRateColor,
+              size: 24,
+            ),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Text(
+                      elderName,
+                      style: const TextStyle(
+                        fontSize: 15,
+                        fontWeight: FontWeight.w600,
+                        color: Colors.black87,
+                      ),
+                    ),
+                    if (roomNumber != null && roomNumber.isNotEmpty) ...[
+                      const SizedBox(width: 6),
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                        decoration: BoxDecoration(
+                          color: Colors.grey.withOpacity(0.2),
+                          borderRadius: BorderRadius.circular(4),
+                        ),
+                        child: Text(
+                          'Room $roomNumber',
+                          style: TextStyle(
+                            fontSize: 10,
+                            color: Colors.black.withOpacity(0.6),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+                const SizedBox(height: 6),
+                Row(
+                  children: [
+                    Text(
+                      'HR: ',
+                      style: TextStyle(
+                        fontSize: 13,
+                        color: Colors.black.withOpacity(0.6),
+                      ),
+                    ),
+                    Text(
+                      '$latestHeartRate BPM',
+                      style: TextStyle(
+                        fontSize: 14,
+                        fontWeight: FontWeight.w600,
+                        color: heartRateColor,
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Text(
+                      'Avg: $avgHeartRate',
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: Colors.black.withOpacity(0.5),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  _formatTime(timestamp),
+                  style: TextStyle(
+                    fontSize: 11,
+                    color: Colors.black.withOpacity(0.4),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+            decoration: BoxDecoration(
+              color: status == 'abnormal'
+                  ? Colors.orange.withOpacity(0.15)
+                  : Colors.green.withOpacity(0.15),
+              borderRadius: BorderRadius.circular(6),
+            ),
+            child: Text(
+              status.toUpperCase(),
+              style: TextStyle(
+                fontSize: 10,
+                fontWeight: FontWeight.w600,
+                color: status == 'abnormal' ? Colors.orange : Colors.green,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   // Get average BP from all readings
   String _getAverageBP() {
     final readingsWithBP = _readings.where((r) => r.bp > 0).toList();
@@ -899,6 +1317,36 @@ class _DashboardScreenState extends State<DashboardScreen> {
     if (latestBP >= 140) return Colors.red;
     if (latestBP >= 120) return Colors.orange;
     return Colors.green;
+  }
+
+  String _getAverageHeartRate() {
+    final readingsWithHeartRate = _readings.where((r) => r.heartRate > 0).toList();
+    if (readingsWithHeartRate.isEmpty) return 'N/A';
+
+    final avg = readingsWithHeartRate
+            .map((r) => r.heartRate)
+            .reduce((a, b) => a + b) /
+        readingsWithHeartRate.length;
+    return '${avg.round()}';
+  }
+
+  String _getLatestHeartRate() {
+    final readingsWithHeartRate = _readings.where((r) => r.heartRate > 0).toList();
+    if (readingsWithHeartRate.isEmpty) return 'N/A';
+
+    readingsWithHeartRate.sort((a, b) => b.timestamp.compareTo(a.timestamp));
+    return '${readingsWithHeartRate.first.heartRate}';
+  }
+
+  Color _getLatestHeartRateColor() {
+    final readingsWithHeartRate = _readings.where((r) => r.heartRate > 0).toList();
+    if (readingsWithHeartRate.isEmpty) return Colors.grey;
+
+    readingsWithHeartRate.sort((a, b) => b.timestamp.compareTo(a.timestamp));
+    final latestHeartRate = readingsWithHeartRate.first.heartRate;
+
+    if (latestHeartRate < 50 || latestHeartRate > 110) return Colors.orange;
+    return Colors.pink;
   }
 
   // Get BP data grouped by elder
@@ -935,6 +1383,39 @@ class _DashboardScreenState extends State<DashboardScreen> {
     bpData.sort((a, b) => (b['timestamp'] as DateTime).compareTo(a['timestamp'] as DateTime));
     
     return bpData.take(5).toList(); // Show top 5
+  }
+
+  List<Map<String, dynamic>> _getElderHeartRateData() {
+    final Map<String, List<Reading>> elderReadings = {};
+
+    for (final reading in _readings.where((r) => r.heartRate > 0)) {
+      final elderName = reading.personName ?? reading.username;
+      elderReadings.putIfAbsent(elderName, () => []);
+      elderReadings[elderName]!.add(reading);
+    }
+
+    final List<Map<String, dynamic>> heartRateData = [];
+    elderReadings.forEach((elderName, readings) {
+      readings.sort((a, b) => b.timestamp.compareTo(a.timestamp));
+      final latestReading = readings.first;
+      final avgHeartRate =
+          readings.map((r) => r.heartRate).reduce((a, b) => a + b) / readings.length;
+
+      heartRateData.add({
+        'elderName': elderName,
+        'latestHeartRate': latestReading.heartRate,
+        'avgHeartRate': avgHeartRate.round(),
+        'timestamp': latestReading.timestamp,
+        'status': latestReading.status,
+        'roomNumber': latestReading.roomNumber,
+      });
+    });
+
+    heartRateData.sort(
+      (a, b) => (b['timestamp'] as DateTime).compareTo(a['timestamp'] as DateTime),
+    );
+
+    return heartRateData.take(5).toList();
   }
 
   // Get abnormal activity data for graph (grouped by hour)

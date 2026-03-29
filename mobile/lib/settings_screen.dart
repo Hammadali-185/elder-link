@@ -1,19 +1,17 @@
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'main.dart';
+import 'services/staff_users_storage.dart';
+import 'staff_gate_nav.dart';
 
 class SettingsScreen extends StatelessWidget {
   const SettingsScreen({super.key});
 
   Future<void> _handleLogout(BuildContext context) async {
     final prefs = await SharedPreferences.getInstance();
-    await prefs.setBool('staff_logged_in', false);
-    
+    await StaffUsersStorage.logoutSession(prefs);
+
     if (context.mounted) {
-      Navigator.of(context).pushAndRemoveUntil(
-        MaterialPageRoute(builder: (_) => const MobileApp()),
-        (route) => false,
-      );
+      await replaceRouteAfterStaffLogout(context);
     }
   }
 

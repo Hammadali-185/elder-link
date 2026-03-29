@@ -1,15 +1,18 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
-    <!-- 
-         Heart-rate sensor access on Wear OS:
-         - No special permissions required for heart-rate sensors on Wear OS devices
-         - Sensor availability is automatically detected at runtime
-         - App gracefully falls back to mock data if sensor is not available
-         - To verify sensor presence: adb shell dumpsys sensorservice | grep -i heart
-    -->
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <uses-permission android:name="android.permission.VIBRATE" />
+    <uses-permission android:name="android.permission.BODY_SENSORS" />
+    <uses-permission android:name="android.permission.health.READ_HEART_RATE" />
+    <!-- Declare watch form factor for Wear OS builds (optional; helps stores & tooling). -->
+    <uses-feature android:name="android.hardware.type.watch" android:required="false" />
+    <uses-feature android:name="android.hardware.sensor.heartrate" android:required="false" />
     <application
         android:label="elderlink"
         android:name="${applicationName}"
-        android:icon="@mipmap/ic_launcher">
+        android:icon="@mipmap/ic_launcher"
+        android:usesCleartextTraffic="true"
+        android:networkSecurityConfig="@xml/network_security_config">
         <activity
             android:name=".MainActivity"
             android:exported="true"

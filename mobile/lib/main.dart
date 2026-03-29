@@ -3,15 +3,30 @@ import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'join_screen.dart';
 import 'staff_home_screen.dart';
+import 'select_staff_account_screen.dart';
+import 'staff_login_screen.dart';
 import 'admin/admin_home_screen.dart';
+import 'services/staff_users_storage.dart';
 import 'services/notification_service.dart';
 import 'services/auto_lock_service.dart';
 import 'services/analytics_service.dart';
 import 'services/data_sharing_service.dart';
+import 'package:elderlink/services/music_player_service.dart';
+
+/// Whether staff/admin session is restored from [SharedPreferences] in **debug** builds.
+///
+/// - **Release/profile:** login persistence always follows stored `staff_logged_in` /
+///   `admin_logged_in` (this flag is ignored).
+/// - **Debug:** when this is `false` (default), those flags are ignored on startup so every
+///   run starts at the welcome flow even if you logged in last time—prefs are still written,
+///   they are just not read for routing.
+/// - Set to `true` when you want hot restart / full restart to keep you logged in like production.
+const bool kAllowSavedLoginInDebug = true;
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  
+  await MusicPlayerService.instance.ensureInitialized();
+
   // Initialize notification service first
   await NotificationService.initialize();
   
@@ -24,7 +39,16 @@ void main() async {
 }
 
 class MobileApp extends StatelessWidget {
-  const MobileApp({super.key});
+  /// After staff logout with existing accounts: account picker (via [AuthWrapper]).
+  final bool openStaffLogin;
+  /// After staff logout with no accounts: signup screen only.
+  final bool openStaffSignup;
+
+  const MobileApp({
+    super.key,
+    this.openStaffLogin = false,
+    this.openStaffSignup = false,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -43,13 +67,23 @@ class MobileApp extends StatelessWidget {
           elevation: 2,
         ),
       ),
-      home: const AuthWrapper(),
+      home: AuthWrapper(
+        openStaffLogin: openStaffLogin,
+        openStaffSignup: openStaffSignup,
+      ),
     );
   }
 }
 
 class AuthWrapper extends StatefulWidget {
-  const AuthWrapper({super.key});
+  final bool openStaffLogin;
+  final bool openStaffSignup;
+
+  const AuthWrapper({
+    super.key,
+    this.openStaffLogin = false,
+    this.openStaffSignup = false,
+  });
 
   @override
   State<AuthWrapper> createState() => _AuthWrapperState();
@@ -60,6 +94,8 @@ class _AuthWrapperState extends State<AuthWrapper> {
   bool _isLoggedIn = false;
   bool _isAdminLoggedIn = false;
   bool _showLogoSplash = true;
+  /// User chose back from post-logout staff login → show welcome flow.
+  bool _dismissedPostLogoutStaffLogin = false;
 
   @override
   void initState() {
@@ -70,14 +106,26 @@ class _AuthWrapperState extends State<AuthWrapper> {
   Future<void> _checkLoginStatus() async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.reload();
-    final useSavedLogin = !kDebugMode;
-    final staffLoggedIn = useSavedLogin && (prefs.getBool('staff_logged_in') ?? false);
-    final adminLoggedIn = useSavedLogin && (prefs.getBool('admin_logged_in') ?? false);
+    final useSavedLogin = !kDebugMode || kAllowSavedLoginInDebug;
+    bool adminLoggedIn = false;
+    bool staffLoggedIn = false;
 
-    if (kDebugMode) {
-      print('AuthWrapper - Debug mode: starting at main page (ignore saved login)');
+    if (useSavedLogin) {
+      adminLoggedIn = prefs.getBool('admin_logged_in') ?? false;
+      if (!adminLoggedIn) {
+        final staffUser = await StaffUsersStorage.validateSessionOrReturnUser(prefs);
+        staffLoggedIn = staffUser != null;
+      }
+    }
+
+    if (kDebugMode && !kAllowSavedLoginInDebug) {
+      print(
+        'AuthWrapper - Debug: ignoring saved login (set kAllowSavedLoginInDebug = true in main.dart to persist)',
+      );
     } else {
-      print('AuthWrapper - Staff logged in: $staffLoggedIn, Admin logged in: $adminLoggedIn');
+      print(
+        'AuthWrapper - Staff session valid: $staffLoggedIn, Admin logged in: $adminLoggedIn',
+      );
     }
 
     setState(() {
@@ -104,16 +152,50 @@ class _AuthWrapperState extends State<AuthWrapper> {
     if (_isLoggedIn) {
       AutoLockService.initialize(() {
         if (mounted) {
-          final prefs = SharedPreferences.getInstance();
-          prefs.then((p) => p.setBool('staff_logged_in', false));
-          Navigator.of(context).pushAndRemoveUntil(
-            MaterialPageRoute(builder: (_) => const MobileApp()),
-            (route) => false,
-          );
+          SharedPreferences.getInstance().then((p) async {
+            await StaffUsersStorage.logoutSession(p);
+            if (!context.mounted) return;
+            final prefs = await SharedPreferences.getInstance();
+            final users = await StaffUsersStorage.getUsers(prefs);
+            if (!context.mounted) return;
+            Navigator.of(context).pushAndRemoveUntil(
+              MaterialPageRoute<void>(
+                builder: (_) => users.isEmpty
+                    ? const MobileApp(openStaffSignup: true)
+                    : const MobileApp(openStaffLogin: true),
+              ),
+              (route) => false,
+            );
+          });
         }
       });
       AutoLockService.updateActivity();
       return const StaffHomeScreen();
+    }
+    if (widget.openStaffSignup &&
+        !_dismissedPostLogoutStaffLogin &&
+        !_isAdminLoggedIn) {
+      return StaffLoginScreen(
+        initialSignUp: true,
+        onRootBack: () {
+          setState(() {
+            _dismissedPostLogoutStaffLogin = true;
+            _showLogoSplash = false;
+          });
+        },
+      );
+    }
+    if (widget.openStaffLogin &&
+        !_dismissedPostLogoutStaffLogin &&
+        !_isAdminLoggedIn) {
+      return SelectStaffAccountScreen(
+        onRootBack: () {
+          setState(() {
+            _dismissedPostLogoutStaffLogin = true;
+            _showLogoSplash = false;
+          });
+        },
+      );
     }
     if (_showLogoSplash) {
       return _LogoSplashScreen(
@@ -399,14 +481,6 @@ class WelcomeScreen extends StatelessWidget {
                               letterSpacing: 0.2,
                             ),
                           ),
-                        ),
-                      ),
-                      const SizedBox(height: 10),
-                      Text(
-                        'Tap to continue',
-                        style: TextStyle(
-                          color: Colors.black.withOpacity(0.55),
-                          fontSize: 12.5,
                         ),
                       ),
                     ],

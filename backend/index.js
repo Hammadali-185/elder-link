@@ -4,7 +4,28 @@ const cors = require("cors");
 require("dotenv").config();
 
 const app = express();
-app.use(cors());
+
+// Chrome Private Network Access: Flutter web (e.g. http://localhost:xxxxx) → http://127.0.0.1:5000
+// triggers a preflight that requires this header or the browser reports "Failed to fetch".
+app.use((req, res, next) => {
+  res.setHeader("Access-Control-Allow-Private-Network", "true");
+  next();
+});
+
+app.use(
+  cors({
+    origin: true,
+    methods: ["GET", "HEAD", "PUT", "PATCH", "POST", "DELETE", "OPTIONS"],
+    allowedHeaders: [
+      "Content-Type",
+      "Authorization",
+      "Accept",
+      "Origin",
+      "X-Requested-With",
+    ],
+    optionsSuccessStatus: 204,
+  })
+);
 app.use(express.json());
 
 // Log all incoming requests
@@ -21,10 +42,14 @@ const readingRoutes = require("./routes/readingRoutes");
 const elderRoutes = require("./routes/elderRoutes");
 const medicineRoutes = require("./routes/medicineRoutes");
 const heartAlertRoutes = require("./routes/heartAlertRoutes");
+const musicSessionRoutes = require("./routes/musicSessionRoutes");
+const musicRoutes = require("./routes/musicRoutes");
 app.use("/api/readings", readingRoutes);
 app.use("/api/elders", elderRoutes);
 app.use("/api/medicines", medicineRoutes);
 app.use("/api/heart-alert", heartAlertRoutes);
+app.use("/api/music", musicRoutes);
+app.use("/api/music-sessions", musicSessionRoutes);
 
 // Connect to MongoDB, then start server
 mongoose.connect(process.env.MONGO_URI, {
@@ -37,10 +62,9 @@ mongoose.connect(process.env.MONGO_URI, {
 })
   .then(() => {
     console.log("✅ MongoDB connected successfully");
-    
-    // Start server only after MongoDB is connected (0.0.0.0 = accept from any interface)
+
     const PORT = process.env.PORT || 5000;
-    app.listen(PORT, '0.0.0.0', () => {
+    app.listen(PORT, "0.0.0.0", () => {
       console.log("✅ Server running on port " + PORT);
       console.log("✅ Ready to accept requests");
       console.log("✅ Routes registered:");
@@ -48,6 +72,8 @@ mongoose.connect(process.env.MONGO_URI, {
       console.log("   - GET/POST /api/elders");
       console.log("   - GET/POST /api/medicines");
       console.log("   - GET/POST /api/heart-alert");
+      console.log("   - POST /api/music/start, POST /api/music/stop, GET /api/music/panel");
+      console.log("   - GET /api/music-sessions/dashboard (legacy)");
     });
   })
   .catch(err => {

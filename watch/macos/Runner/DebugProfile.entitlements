@@ -8,5 +8,8 @@
 	<true/>
 	<key>com.apple.security.network.server</key>
 	<true/>
+	<!-- Required for HTTP client calls to LAN / backend (without this: errno 1 Operation not permitted) -->
+	<key>com.apple.security.network.client</key>
+	<true/>
 </dict>
 </plist>

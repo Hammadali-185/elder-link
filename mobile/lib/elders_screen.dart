@@ -124,6 +124,7 @@ class _EldersScreenState extends State<EldersScreen> {
             id: manualElder.id,
             username: manualElder.name.toLowerCase().replaceAll(' ', '_'),
             bp: 0,
+            heartRate: 0,
             status: manualElder.status == 'need_attention' ? 'abnormal' : 'normal',
             emergency: false,
             timestamp: manualElder.createdAt,
@@ -410,11 +411,8 @@ class _EldersScreenState extends State<EldersScreen> {
         elevation: 2,
         centerTitle: false,
         actions: [
-          const Icon(Icons.man, size: 20, color: Colors.white),
-          const SizedBox(width: 8),
-          const Icon(Icons.woman, size: 20, color: Colors.white),
           Padding(
-            padding: const EdgeInsets.only(right: 16, left: 8),
+            padding: const EdgeInsets.only(right: 16),
             child: GestureDetector(
               onTap: () {
                 Navigator.of(context).push(
@@ -584,12 +582,7 @@ class _EldersScreenState extends State<EldersScreen> {
                     ],
                   ),
                 ),
-      floatingActionButton: FloatingActionButton(
-        heroTag: 'fab_elders',
-        onPressed: _showAddElderDialog,
-        backgroundColor: const Color(0xFF17A2A2),
-        child: const Icon(Icons.add, color: Colors.white),
-      ),
+      floatingActionButton: null,
     );
   }
 

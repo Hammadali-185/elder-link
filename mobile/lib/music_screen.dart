@@ -1,11 +1,25 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
+
 import 'account_settings_screen.dart';
+import 'services/api_service.dart';
 import 'widgets/avatar_widget.dart';
 
-class MusicScreen extends StatelessWidget {
+class MusicScreen extends StatefulWidget {
   final String? staffName;
 
   const MusicScreen({super.key, this.staffName});
+
+  @override
+  State<MusicScreen> createState() => _MusicScreenState();
+}
+
+class _MusicScreenState extends State<MusicScreen> {
+  MusicDashboardSummary? _summary;
+  bool _loading = true;
+  String? _error;
+  Timer? _refreshTimer;
 
   static const _deepMint = Color(0xFF17A2A2);
   static const _lightMint = Color(0xFF90EE90);
@@ -13,6 +27,39 @@ class MusicScreen extends StatelessWidget {
   static const _cardBg = Color(0xFFFFFFFF);
   static const _textPrimary = Color(0xFF1A3C34);
   static const _textSecondary = Color(0xFF5A7A72);
+
+  @override
+  void initState() {
+    super.initState();
+    _loadPanel();
+    _refreshTimer = Timer.periodic(const Duration(seconds: 20), (_) {
+      _loadPanel(showLoading: false);
+    });
+  }
+
+  @override
+  void dispose() {
+    _refreshTimer?.cancel();
+    super.dispose();
+  }
+
+  Future<void> _loadPanel({bool showLoading = true}) async {
+    if (showLoading && mounted) {
+      setState(() {
+        _loading = true;
+        _error = null;
+      });
+    }
+
+    final data = await ApiService.getMusicDashboard();
+    if (!mounted) return;
+
+    setState(() {
+      _summary = data;
+      _loading = false;
+      _error = data == null ? 'Could not load live music monitoring.' : null;
+    });
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -33,16 +80,17 @@ class MusicScreen extends StatelessWidget {
         elevation: 2,
         centerTitle: false,
         actions: [
-          const Icon(Icons.man, size: 20, color: Colors.white),
-          const SizedBox(width: 8),
-          const Icon(Icons.woman, size: 20, color: Colors.white),
+          IconButton(
+            onPressed: _loading ? null : _loadPanel,
+            icon: const Icon(Icons.refresh),
+          ),
           Padding(
-            padding: const EdgeInsets.only(right: 16, left: 8),
+            padding: const EdgeInsets.only(right: 16),
             child: GestureDetector(
               onTap: () {
                 Navigator.of(context).push(
                   MaterialPageRoute(
-                    builder: (_) => AccountSettingsScreen(staffName: staffName),
+                    builder: (_) => AccountSettingsScreen(staffName: widget.staffName),
                   ),
                 );
               },
@@ -52,47 +100,32 @@ class MusicScreen extends StatelessWidget {
         ],
       ),
       body: SafeArea(
-        child: SingleChildScrollView(
-          padding: const EdgeInsets.all(20),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
+        child: RefreshIndicator(
+          onRefresh: _loadPanel,
+          child: ListView(
+            padding: const EdgeInsets.all(20),
             children: [
-              _buildHeader(context),
+              _buildHeader(),
+              const SizedBox(height: 20),
+              if (_loading && _summary == null)
+                const Padding(
+                  padding: EdgeInsets.symmetric(vertical: 60),
+                  child: Center(child: CircularProgressIndicator()),
+                )
+              else ...[
+                if (_error != null) _buildErrorCard(),
+                if (_summary != null) ...[
+                  _buildOverview(_summary!),
+                  const SizedBox(height: 24),
+                  _buildNowListeningSection(_summary!),
+                  const SizedBox(height: 24),
+                  _buildTodayByElderSection(_summary!),
+                  const SizedBox(height: 24),
+                  _buildRecentActivitySection(_summary!),
+                ] else if (!_loading)
+                  _buildEmptyCard('No music monitoring data yet.'),
+              ],
               const SizedBox(height: 24),
-              _buildQuickPlay(context),
-              const SizedBox(height: 28),
-              _buildSection(
-                context,
-                title: 'Relaxing music',
-                icon: Icons.spa_rounded,
-                items: _relaxingMusic,
-                isPlaylist: false,
-              ),
-              const SizedBox(height: 24),
-              _buildSection(
-                context,
-                title: 'Old favorites',
-                icon: Icons.favorite_rounded,
-                items: _oldFavorites,
-                isPlaylist: false,
-              ),
-              const SizedBox(height: 24),
-              _buildSection(
-                context,
-                title: 'Radio & podcasts',
-                icon: Icons.radio_rounded,
-                items: _radioPodcasts,
-                isPlaylist: true,
-              ),
-              const SizedBox(height: 24),
-              _buildSection(
-                context,
-                title: 'Nature & calm',
-                icon: Icons.grass_rounded,
-                items: _natureCalm,
-                isPlaylist: true,
-              ),
-              const SizedBox(height: 32),
             ],
           ),
         ),
@@ -100,81 +133,76 @@ class MusicScreen extends StatelessWidget {
     );
   }
 
-  Widget _buildHeader(BuildContext context) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
+  Widget _buildHeader() {
+    return Row(
       children: [
-        Row(
-          children: [
-            Container(
-              padding: const EdgeInsets.all(12),
-              decoration: BoxDecoration(
-                gradient: const LinearGradient(
-                  colors: [_deepMint, Color(0xFF2DB8B8)],
-                  begin: Alignment.topLeft,
-                  end: Alignment.bottomRight,
+        Container(
+          padding: const EdgeInsets.all(12),
+          decoration: BoxDecoration(
+            gradient: const LinearGradient(
+              colors: [_deepMint, Color(0xFF2DB8B8)],
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+            ),
+            borderRadius: BorderRadius.circular(16),
+            boxShadow: [
+              BoxShadow(
+                color: _deepMint.withValues(alpha: 0.35),
+                blurRadius: 12,
+                offset: const Offset(0, 4),
+              ),
+            ],
+          ),
+          child: const Icon(Icons.music_note_rounded, color: Colors.white, size: 28),
+        ),
+        const SizedBox(width: 16),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'Music monitoring',
+                style: TextStyle(
+                  fontSize: 22,
+                  fontWeight: FontWeight.w800,
+                  color: _textPrimary,
+                  letterSpacing: -0.5,
                 ),
-                borderRadius: BorderRadius.circular(16),
-                boxShadow: [
-                  BoxShadow(
-                    color: _deepMint.withOpacity(0.35),
-                    blurRadius: 12,
-                    offset: const Offset(0, 4),
-                  ),
-                ],
               ),
-              child: const Icon(Icons.music_note_rounded, color: Colors.white, size: 28),
-            ),
-            const SizedBox(width: 16),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    'Music & entertainment',
-                    style: TextStyle(
-                      fontSize: 22,
-                      fontWeight: FontWeight.w800,
-                      color: _textPrimary,
-                      letterSpacing: -0.5,
-                    ),
-                  ),
-                  const SizedBox(height: 4),
-                  Text(
-                    'Relax, remember, and enjoy',
-                    style: TextStyle(
-                      fontSize: 14,
-                      color: _textSecondary,
-                      fontWeight: FontWeight.w500,
-                    ),
-                  ),
-                ],
+              const SizedBox(height: 4),
+              Text(
+                'Live elder listening status and category trends',
+                style: TextStyle(
+                  fontSize: 14,
+                  color: _textSecondary,
+                  fontWeight: FontWeight.w500,
+                ),
               ),
-            ),
-          ],
+            ],
+          ),
         ),
       ],
     );
   }
 
-  Widget _buildQuickPlay(BuildContext context) {
+  Widget _buildOverview(MusicDashboardSummary summary) {
     return Container(
       width: double.infinity,
       padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
         gradient: LinearGradient(
           colors: [
-            _deepMint.withOpacity(0.12),
-            _lightMint.withOpacity(0.2),
+            _deepMint.withValues(alpha: 0.12),
+            _lightMint.withValues(alpha: 0.2),
           ],
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
         ),
         borderRadius: BorderRadius.circular(20),
-        border: Border.all(color: _deepMint.withOpacity(0.2), width: 1),
+        border: Border.all(color: _deepMint.withValues(alpha: 0.2), width: 1),
         boxShadow: [
           BoxShadow(
-            color: _deepMint.withOpacity(0.08),
+            color: _deepMint.withValues(alpha: 0.08),
             blurRadius: 16,
             offset: const Offset(0, 6),
           ),
@@ -185,10 +213,10 @@ class MusicScreen extends StatelessWidget {
         children: [
           Row(
             children: [
-              Icon(Icons.play_circle_filled_rounded, color: _deepMint, size: 24),
+              Icon(Icons.headphones_rounded, color: _deepMint, size: 24),
               const SizedBox(width: 8),
               Text(
-                'Playing now',
+                'Live overview',
                 style: TextStyle(
                   fontSize: 12,
                   fontWeight: FontWeight.w700,
@@ -200,7 +228,7 @@ class MusicScreen extends StatelessWidget {
           ),
           const SizedBox(height: 12),
           Text(
-            'What a Wonderful World',
+            '${summary.activeListenersCount} elder${summary.activeListenersCount == 1 ? '' : 's'} listening now',
             style: TextStyle(
               fontSize: 18,
               fontWeight: FontWeight.w700,
@@ -209,21 +237,29 @@ class MusicScreen extends StatelessWidget {
           ),
           const SizedBox(height: 4),
           Text(
-            'Louis Armstrong',
+            summary.mostPlayedCategory == null
+                ? 'Most played category: not enough data yet'
+                : 'Most played category today: ${_formatCategory(summary.mostPlayedCategory!)}'
+                    '${summary.mostPlayedCategorySeconds == null ? '' : ' (${_formatDuration(summary.mostPlayedCategorySeconds!)})'}',
             style: TextStyle(fontSize: 14, color: _textSecondary),
           ),
           const SizedBox(height: 16),
           Row(
             children: [
-              _miniButton(Icons.skip_previous_rounded),
-              const SizedBox(width: 8),
-              _miniButton(Icons.play_arrow_rounded, isPrimary: true),
-              const SizedBox(width: 8),
-              _miniButton(Icons.skip_next_rounded),
-              const Spacer(),
-              Text(
-                '2:14 / 2:19',
-                style: TextStyle(fontSize: 12, color: _textSecondary),
+              Expanded(
+                child: _statChip(
+                  icon: Icons.album_outlined,
+                  label: 'Now playing',
+                  value: '${summary.nowPlaying.length}',
+                ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: _statChip(
+                  icon: Icons.schedule,
+                  label: 'Updated',
+                  value: _formatDateTime(summary.generatedAt),
+                ),
               ),
             ],
           ),
@@ -232,174 +268,267 @@ class MusicScreen extends StatelessWidget {
     );
   }
 
-  Widget _miniButton(IconData icon, {bool isPrimary = false}) {
-    return Material(
-      color: isPrimary ? _deepMint : _deepMint.withOpacity(0.15),
-      borderRadius: BorderRadius.circular(24),
-      child: InkWell(
-        onTap: () {},
-        borderRadius: BorderRadius.circular(24),
-        child: Padding(
-          padding: const EdgeInsets.all(10),
-          child: Icon(
-            icon,
-            size: 24,
-            color: isPrimary ? Colors.white : _deepMint,
+  Widget _statChip({
+    required IconData icon,
+    required String label,
+    required String value,
+  }) {
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: _deepMint.withValues(alpha: 0.15)),
+      ),
+      child: Row(
+        children: [
+          Icon(icon, size: 18, color: _deepMint),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(label, style: TextStyle(fontSize: 11, color: _textSecondary)),
+                Text(
+                  value,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w700,
+                    color: _textPrimary,
+                  ),
+                ),
+              ],
+            ),
           ),
-        ),
+        ],
       ),
     );
   }
 
-  Widget _buildSection(
-    BuildContext context, {
-    required String title,
-    required IconData icon,
-    required List<Map<String, String>> items,
-    required bool isPlaylist,
-  }) {
+  Widget _buildNowListeningSection(MusicDashboardSummary summary) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Row(
-          children: [
-            Icon(icon, size: 20, color: _deepMint),
-            const SizedBox(width: 8),
-            Text(
-              title,
-              style: TextStyle(
-                fontSize: 18,
-                fontWeight: FontWeight.w700,
-                color: _textPrimary,
-              ),
-            ),
-          ],
-        ),
+        _sectionTitle('Currently listening', Icons.graphic_eq),
         const SizedBox(height: 12),
-        SizedBox(
-          height: isPlaylist ? 148 : 128,
-          child: ListView.separated(
-            scrollDirection: Axis.horizontal,
-            itemCount: items.length,
-            separatorBuilder: (_, __) => const SizedBox(width: 12),
-            itemBuilder: (context, index) {
-              final item = items[index];
-              return _buildEntertainmentCard(
-                title: item['title']!,
-                subtitle: item['subtitle']!,
-                icon: isPlaylist ? Icons.headphones_rounded : Icons.music_note_rounded,
-                gradient: _cardGradients[index % _cardGradients.length],
-              );
-            },
+        if (summary.nowPlaying.isEmpty)
+          _buildEmptyCard('No elder is listening right now.')
+        else
+          ...summary.nowPlaying.map((item) {
+            return _infoCard(
+              leading: Icons.play_circle_fill_rounded,
+              title: item.elderName,
+              subtitle:
+                  '${item.title}  ${_formatCategory(item.category)}  Started ${_formatDateTime(item.playStart)}',
+            );
+          }),
+      ],
+    );
+  }
+
+  Widget _buildTodayByElderSection(MusicDashboardSummary summary) {
+    final sorted = [...summary.listeningTodaySecondsByElder]
+      ..sort((a, b) => b.totalSeconds.compareTo(a.totalSeconds));
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _sectionTitle('Listening today', Icons.people_alt_rounded),
+        const SizedBox(height: 12),
+        if (sorted.isEmpty)
+          _buildEmptyCard('No listening recorded today yet.')
+        else
+          ...sorted.map((item) {
+            return _infoCard(
+              leading: Icons.person,
+              title: item.elderName,
+              subtitle: 'Listening time today: ${_formatDuration(item.totalSeconds)}',
+              trailing: Text(
+                _formatDuration(item.totalSeconds),
+                style: TextStyle(
+                  color: _deepMint,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            );
+          }),
+      ],
+    );
+  }
+
+  Widget _buildRecentActivitySection(MusicDashboardSummary summary) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _sectionTitle('Recent finished listening', Icons.history),
+        const SizedBox(height: 12),
+        if (summary.lastPlayedByElder.isEmpty)
+          _buildEmptyCard('No completed listening session yet.')
+        else
+          ...summary.lastPlayedByElder.take(8).map((item) {
+            return _infoCard(
+              leading: Icons.access_time,
+              title: item.elderName,
+              subtitle: 'Last listened at ${_formatDateTime(item.lastPlayedAt)}',
+            );
+          }),
+      ],
+    );
+  }
+
+  Widget _sectionTitle(String title, IconData icon) {
+    return Row(
+      children: [
+        Icon(icon, size: 20, color: _deepMint),
+        const SizedBox(width: 8),
+        Text(
+          title,
+          style: TextStyle(
+            fontSize: 18,
+            fontWeight: FontWeight.w700,
+            color: _textPrimary,
           ),
         ),
       ],
     );
   }
 
-  Widget _buildEntertainmentCard({
+  Widget _infoCard({
+    required IconData leading,
     required String title,
     required String subtitle,
-    required IconData icon,
-    required List<Color> gradient,
+    Widget? trailing,
   }) {
-    return Material(
-      color: Colors.transparent,
-      child: InkWell(
-        onTap: () {},
+    return Container(
+      margin: const EdgeInsets.only(bottom: 12),
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: _cardBg,
         borderRadius: BorderRadius.circular(16),
-        child: Container(
-          width: 180,
-          padding: const EdgeInsets.all(14),
-          decoration: BoxDecoration(
-            color: _cardBg,
-            borderRadius: BorderRadius.circular(16),
-            boxShadow: [
-              BoxShadow(
-                color: Colors.black.withOpacity(0.06),
-                blurRadius: 12,
-                offset: const Offset(0, 4),
-              ),
-            ],
-            border: Border.all(color: Colors.black.withOpacity(0.04)),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.05),
+            blurRadius: 12,
+            offset: const Offset(0, 4),
           ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Container(
-                padding: const EdgeInsets.all(8),
-                decoration: BoxDecoration(
-                  gradient: LinearGradient(
-                    colors: gradient,
-                    begin: Alignment.topLeft,
-                    end: Alignment.bottomRight,
+        ],
+        border: Border.all(color: Colors.black.withValues(alpha: 0.04)),
+      ),
+      child: Row(
+        children: [
+          Container(
+            padding: const EdgeInsets.all(10),
+            decoration: BoxDecoration(
+              color: _deepMint.withValues(alpha: 0.12),
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: Icon(leading, color: _deepMint),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  title,
+                  style: TextStyle(
+                    fontSize: 15,
+                    fontWeight: FontWeight.w700,
+                    color: _textPrimary,
                   ),
-                  borderRadius: BorderRadius.circular(10),
                 ),
-                child: Icon(icon, color: Colors.white, size: 22),
-              ),
-              const SizedBox(height: 10),
-              Text(
-                title,
-                style: TextStyle(
-                  fontSize: 13,
-                  fontWeight: FontWeight.w700,
-                  color: _textPrimary,
+                const SizedBox(height: 4),
+                Text(
+                  subtitle,
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: _textSecondary,
+                  ),
                 ),
-                maxLines: 2,
-                overflow: TextOverflow.ellipsis,
-              ),
-              const SizedBox(height: 2),
-              Text(
-                subtitle,
-                style: TextStyle(
-                  fontSize: 11,
-                  color: _textSecondary,
-                ),
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-              ),
-            ],
+              ],
+            ),
           ),
+          if (trailing != null) ...[
+            const SizedBox(width: 8),
+            trailing,
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _buildErrorCard() {
+    return Container(
+      margin: const EdgeInsets.only(bottom: 16),
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: Colors.orange.shade50,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: Colors.orange.shade200),
+      ),
+      child: Row(
+        children: [
+          Icon(Icons.warning_amber_rounded, color: Colors.orange.shade800),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              _error ?? 'Something went wrong.',
+              style: TextStyle(color: Colors.orange.shade900),
+            ),
+          ),
+          IconButton(
+            onPressed: _loading ? null : _loadPanel,
+            icon: const Icon(Icons.refresh),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildEmptyCard(String text) {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: Colors.black.withValues(alpha: 0.04)),
+      ),
+      child: Text(
+        text,
+        style: TextStyle(
+          fontSize: 13,
+          color: _textSecondary,
         ),
       ),
     );
   }
 
-  static const _cardGradients = [
-    [_deepMint, Color(0xFF2DB8B8)],
-    [Color(0xFF6B8E6B), Color(0xFF8FBC8F)],
-    [Color(0xFF5B7C99), Color(0xFF7BA3C4)],
-    [Color(0xFF9B7B9B), Color(0xFFB895B8)],
-  ];
+  String _formatCategory(String value) {
+    return value
+        .split('_')
+        .where((part) => part.isNotEmpty)
+        .map((part) => '${part[0].toUpperCase()}${part.substring(1)}')
+        .join(' ');
+  }
 
-  static final _relaxingMusic = [
-    {'title': 'Piano in the evening', 'subtitle': 'Calm piano'},
-    {'title': 'Soft strings', 'subtitle': 'Orchestral peace'},
-    {'title': 'Gentle guitar', 'subtitle': 'Acoustic'},
-    {'title': 'Meditation tones', 'subtitle': 'Ambient'},
-  ];
+  String _formatDuration(int totalSeconds) {
+    final d = Duration(seconds: totalSeconds);
+    if (d.inHours > 0) {
+      return '${d.inHours}h ${d.inMinutes.remainder(60)}m';
+    }
+    if (d.inMinutes > 0) {
+      return '${d.inMinutes}m ${d.inSeconds.remainder(60)}s';
+    }
+    return '${d.inSeconds}s';
+  }
 
-  static final _oldFavorites = [
-    {'title': 'What a Wonderful World', 'subtitle': 'Louis Armstrong'},
-    {'title': 'Moon River', 'subtitle': 'Andy Williams'},
-    {'title': 'Fly Me to the Moon', 'subtitle': 'Frank Sinatra'},
-    {'title': 'Over the Rainbow', 'subtitle': 'Judy Garland'},
-    {'title': 'My Way', 'subtitle': 'Frank Sinatra'},
-  ];
-
-  static final _radioPodcasts = [
-    {'title': 'Classic FM', 'subtitle': 'Classical music'},
-    {'title': 'Golden oldies', 'subtitle': '50s & 60s hits'},
-    {'title': 'Stories of the past', 'subtitle': 'Nostalgia podcast'},
-    {'title': 'Garden talk', 'subtitle': 'Gardening & nature'},
-  ];
-
-  static final _natureCalm = [
-    {'title': 'Rain on the window', 'subtitle': 'Rain sounds'},
-    {'title': 'Forest morning', 'subtitle': 'Birds & breeze'},
-    {'title': 'Ocean waves', 'subtitle': 'Seaside calm'},
-    {'title': 'Crackling fireplace', 'subtitle': 'Cozy sounds'},
-  ];
+  String _formatDateTime(DateTime dt) {
+    final local = dt.toLocal();
+    final hour = local.hour > 12 ? local.hour - 12 : (local.hour == 0 ? 12 : local.hour);
+    final minute = local.minute.toString().padLeft(2, '0');
+    final suffix = local.hour >= 12 ? 'PM' : 'AM';
+    return '${local.day}/${local.month} $hour:$minute $suffix';
+  }
 }

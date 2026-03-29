@@ -1,12 +1,42 @@
 const Medicine = require("../models/medicine");
+const MedicineAssignmentEvent = require("../models/medicineAssignmentEvent");
+const { notifyMedicineChange } = require("../services/medicineNotify");
 
 exports.createMedicine = async (req, res) => {
   try {
     const medicine = new Medicine(req.body);
     const saved = await medicine.save();
+    try {
+      await notifyMedicineChange(saved, "assigned");
+    } catch (notifyErr) {
+      console.error("notifyMedicineChange (create):", notifyErr.message);
+    }
     res.status(201).json(saved);
   } catch (error) {
     console.error("Error creating medicine:", error);
+    res.status(400).json({ error: error.message });
+  }
+};
+
+exports.patchMedicine = async (req, res) => {
+  try {
+    const updates = { ...req.body };
+    delete updates._id;
+    const medicine = await Medicine.findByIdAndUpdate(
+      req.params.id,
+      { ...updates, updatedAt: new Date() },
+      { new: true, runValidators: true }
+    );
+    if (!medicine) {
+      return res.status(404).json({ error: "Medicine not found" });
+    }
+    try {
+      await notifyMedicineChange(medicine, "updated");
+    } catch (notifyErr) {
+      console.error("notifyMedicineChange (patch):", notifyErr.message);
+    }
+    res.json(medicine);
+  } catch (error) {
     res.status(400).json({ error: error.message });
   }
 };
@@ -54,11 +84,20 @@ exports.updateMedicineStatus = async (req, res) => {
       },
       { new: true }
     );
-    
+
     if (!medicine) {
       return res.status(404).json({ error: "Medicine not found" });
     }
-    
+
+    const latestEvent = await MedicineAssignmentEvent.findOne({
+      medicineId: medicine._id,
+    }).sort({ assignedTime: -1 });
+    if (latestEvent) {
+      latestEvent.taken = status === "taken";
+      latestEvent.takenAt = status === "taken" ? new Date() : null;
+      await latestEvent.save();
+    }
+
     res.json(medicine);
   } catch (error) {
     res.status(400).json({ error: error.message });

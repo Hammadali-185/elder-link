@@ -1,4 +1,3 @@
-import 'package:flutter/material.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -180,14 +179,22 @@ class NotificationService {
     required String personName,
     required String status,
     required int bp,
+    int? heartRate,
     required DateTime timestamp,
   }) async {
     final timeStr = _formatTime(timestamp);
     String body;
+    final hasHeartRate = (heartRate ?? 0) > 0;
+    final hasBp = bp > 0;
+    final readingLabel = hasBp && hasHeartRate
+        ? 'BP: $bp, HR: $heartRate BPM'
+        : hasHeartRate
+            ? 'Heart rate: $heartRate BPM'
+            : 'BP: $bp';
     if (status == 'abnormal') {
-      body = 'Abnormal health reading detected (BP: $bp)';
+      body = 'Abnormal health reading detected ($readingLabel)';
     } else {
-      body = 'Health reading: BP $bp';
+      body = 'Health reading: $readingLabel';
     }
 
     await sendNotification(
@@ -196,7 +203,13 @@ class NotificationService {
       type: 'health',
       personName: personName,
       timestamp: timeStr,
-      payload: {'type': 'health', 'personName': personName, 'status': status, 'bp': bp},
+      payload: {
+        'type': 'health',
+        'personName': personName,
+        'status': status,
+        'bp': bp,
+        'heartRate': heartRate ?? 0,
+      },
     );
   }
 

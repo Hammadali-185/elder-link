@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:vibration/vibration.dart';
@@ -95,9 +96,13 @@ class _ClockScreenState extends State<ClockScreen> {
       _isRinging = true;
     });
 
-    // Vibrate
-    if (await Vibration.hasVibrator() ?? false) {
-      Vibration.vibrate(pattern: [0, 500, 500, 500], repeat: 1);
+    // Vibrate (skip on web - no plugin implementation)
+    if (!kIsWeb) {
+      try {
+        if (await Vibration.hasVibrator() ?? false) {
+          Vibration.vibrate(pattern: [0, 500, 500, 500], repeat: 1);
+        }
+      } catch (_) {}
     }
 
     // Play alarm sound repeatedly
@@ -119,7 +124,11 @@ class _ClockScreenState extends State<ClockScreen> {
 
   void _stopRing() {
     _ringTimer?.cancel();
-    Vibration.cancel();
+    if (!kIsWeb) {
+      try {
+        Vibration.cancel();
+      } catch (_) {}
+    }
     setState(() {
       _isRinging = false;
     });
@@ -194,7 +203,11 @@ class _ClockScreenState extends State<ClockScreen> {
     _timer?.cancel();
     _clockTimer?.cancel();
     _ringTimer?.cancel();
-    Vibration.cancel();
+    if (!kIsWeb) {
+      try {
+        Vibration.cancel();
+      } catch (_) {}
+    }
     super.dispose();
   }
 
