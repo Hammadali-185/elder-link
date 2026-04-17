@@ -36,7 +36,7 @@ class _MedicineReminderScreenState extends State<MedicineReminderScreen> {
 
   Future<void> _loadMedicines() async {
     try {
-      final medicines = await ApiService.getMedicines(date: DateTime.now());
+      final medicines = await ApiService.getMedicines();
       if (!mounted) return;
       setState(() {
         _medicines = medicines;

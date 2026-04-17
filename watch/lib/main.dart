@@ -7,20 +7,27 @@ import 'screens/settings_screen.dart';
 import 'screens/medicine_reminder_screen.dart';
 import 'screens/health_monitoring_screen.dart';
 import 'screens/audio_screen.dart';
+import 'screens/switch_elder_screen.dart';
 import 'services/settings_service.dart';
 import 'services/api_service.dart';
 import 'services/music_player_service.dart';
+import 'karachi_time.dart';
 import 'services/medicine_schedule_monitor.dart';
+import 'services/cross_elder_medicine_notifier.dart';
 import 'ui/watch_frame.dart';
 import 'ui/medicine_schedule_alarm_overlay.dart';
+import 'ui/cross_elder_medicine_banner_overlay.dart';
 
 // Record music metadata (not audio) to MongoDB when elder plays on watch.
 const bool _kReportMusicSessions = true;
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  ensureKarachiTimeZones();
   await SettingsService.load();
+  await ApiService.loadNetworkConfig();
   await ApiService.loadSavedUserInfo();
+  await ApiService.mergeRecentHistoryWithServerElders();
   await ApiService.syncElderProfileToServer();
   await MusicPlayerService.instance.ensureInitialized();
   MusicPlayerService.reportSessionsToBackend = _kReportMusicSessions;
@@ -44,10 +51,12 @@ class _WatchAppState extends State<WatchApp> {
   void initState() {
     super.initState();
     MedicineScheduleMonitor.instance.start();
+    CrossElderMedicineNotifier.instance.start();
   }
 
   @override
   void dispose() {
+    CrossElderMedicineNotifier.instance.dispose();
     MedicineScheduleMonitor.instance.dispose();
     super.dispose();
   }
@@ -72,6 +81,8 @@ class _WatchAppState extends State<WatchApp> {
         return ClockScreen(onBackTap: _goBack);
       case 4: // My Info
         return MyInfoScreen(onBackTap: _goBack);
+      case 9: // Switch resident
+        return SwitchElderScreen(onBackTap: _goBack);
       case 6: // Health Monitoring
         return HealthMonitoringScreen(onBackTap: _goBack);
       case 5: // Music / Audio
@@ -129,6 +140,7 @@ class _WatchAppState extends State<WatchApp> {
                 ],
               ),
             ),
+            const CrossElderMedicineBannerOverlay(),
             const MedicineScheduleAlarmOverlay(),
           ],
         ),

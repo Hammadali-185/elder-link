@@ -1,18 +1,19 @@
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-import '../services/staff_users_storage.dart';
+import '../admin/staff_display_profile.dart';
+import '../services/staff_avatar_local.dart';
 import 'avatar_image_io.dart' if (dart.library.html) 'avatar_image_web.dart'
     as avatar_image;
 
-/// Avatar for a stored [StaffUser] (not necessarily the active session).
+/// Avatar for a [StaffDisplayProfile] (e.g. admin roster row).
 class StaffAccountAvatar extends StatelessWidget {
-  final StaffUser user;
+  final StaffDisplayProfile profile;
   final double size;
 
   const StaffAccountAvatar({
     super.key,
-    required this.user,
+    required this.profile,
     this.size = 48,
   });
 
@@ -21,27 +22,22 @@ class StaffAccountAvatar extends StatelessWidget {
     return FutureBuilder<Map<String, dynamic>>(
       future: _load(),
       builder: (context, snapshot) {
-        final avatarType = snapshot.data?['type'] ?? 'male';
+        final avatarType = snapshot.data?['type'] ?? 'neutral';
         final imagePath = snapshot.data?['imagePath'] as String?;
         final imageBase64 = snapshot.data?['imageBase64'] as String?;
-        final isMale = avatarType == 'male';
         final isCustom = avatarType == 'custom';
         final Color bgColor = (imagePath == null || imagePath.isEmpty) &&
                 (imageBase64 == null || imageBase64.isEmpty)
             ? (isCustom
-                ? Colors.grey.withOpacity(0.2)
-                : (isMale
-                    ? Colors.blue.withOpacity(0.25)
-                    : Colors.pink.withOpacity(0.25)))
+                ? Colors.grey.withValues(alpha: 0.2)
+                : Colors.blueGrey.withValues(alpha: 0.14))
             : Colors.transparent;
-        final Color iconColor = isCustom
-            ? Colors.grey.shade700
-            : (isMale ? Colors.blue.shade800 : Colors.pink.shade700);
-        final IconData defaultIcon =
-            isCustom ? Icons.person : (isMale ? Icons.man : Icons.woman);
+        final Color iconColor =
+            isCustom ? Colors.grey.shade700 : Colors.blueGrey.shade800;
+        const IconData defaultIcon = Icons.person;
         final Color borderColor = (imagePath == null || imagePath.isEmpty) &&
                 (imageBase64 == null || imageBase64.isEmpty)
-            ? (isCustom ? Colors.grey : (isMale ? Colors.blue : Colors.pink))
+            ? (isCustom ? Colors.grey : Colors.blueGrey.shade300)
             : Colors.white;
 
         return Container(
@@ -53,7 +49,7 @@ class StaffAccountAvatar extends StatelessWidget {
             border: Border.all(color: borderColor, width: 2),
             boxShadow: [
               BoxShadow(
-                color: Colors.black.withOpacity(0.1),
+                color: Colors.black.withValues(alpha: 0.1),
                 blurRadius: 4,
                 offset: const Offset(0, 2),
               ),
@@ -73,6 +69,6 @@ class StaffAccountAvatar extends StatelessWidget {
 
   Future<Map<String, dynamic>> _load() async {
     final prefs = await SharedPreferences.getInstance();
-    return StaffUsersStorage.getUserAvatarPreview(prefs, user);
+    return StaffAvatarLocal.getPreview(prefs, profile.id, profile.avatarPreset);
   }
 }

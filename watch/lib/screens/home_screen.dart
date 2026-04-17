@@ -105,19 +105,18 @@ class HomeScreen extends StatelessWidget {
     // Specs are stable; only callbacks depend on navigation.
     final specs = <_WheelSpec>[
       const _WheelSpec(
-        kind: _WheelSpecKind.image,
-        imageAsset: 'symbol.jpeg',
-        label: 'App',
-        color: Color(0xFFF5F5F5),
-        screenIndex: null,
-        decorative: true,
-      ),
-      const _WheelSpec(
         kind: _WheelSpecKind.icon,
         icon: Icons.medication,
         label: 'Medicine',
         color: Color(0xFFBDBDBD),
         screenIndex: 2,
+      ),
+      const _WheelSpec(
+        kind: _WheelSpecKind.icon,
+        icon: Icons.swap_horiz,
+        label: 'Switch',
+        color: Color(0xFF5C6BC0),
+        screenIndex: 9,
       ),
       const _WheelSpec(
         kind: _WheelSpecKind.icon,

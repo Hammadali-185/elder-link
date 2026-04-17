@@ -1,4 +1,6 @@
 import 'package:flutter/material.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+
 import 'admin_dashboard_screen.dart';
 import 'admin_staff_screen.dart';
 import 'admin_roles_screen.dart';
@@ -14,6 +16,26 @@ class AdminHomeScreen extends StatefulWidget {
 
 class _AdminHomeScreenState extends State<AdminHomeScreen> {
   int _currentIndex = 0;
+  late final ValueNotifier<bool> _showAdminQuickActions;
+
+  @override
+  void initState() {
+    super.initState();
+    _showAdminQuickActions = ValueNotifier<bool>(true);
+    _reloadQuickActionsPref();
+  }
+
+  @override
+  void dispose() {
+    _showAdminQuickActions.dispose();
+    super.dispose();
+  }
+
+  Future<void> _reloadQuickActionsPref() async {
+    final p = await SharedPreferences.getInstance();
+    if (!mounted) return;
+    _showAdminQuickActions.value = p.getBool('admin_settings_show_activity') ?? true;
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -22,12 +44,16 @@ class _AdminHomeScreenState extends State<AdminHomeScreen> {
         index: _currentIndex,
         children: [
           AdminDashboardScreen(
+            showQuickActionsListenable: _showAdminQuickActions,
+            onReloadQuickActionsPref: _reloadQuickActionsPref,
             onNavigateToTab: (index) => setState(() => _currentIndex = index),
           ),
           const AdminStaffScreen(),
           AdminRolesScreen(),
           AdminLogsScreen(),
-          AdminSettingsScreen(),
+          AdminSettingsScreen(
+            onPrefsChanged: _reloadQuickActionsPref,
+          ),
         ],
       ),
       bottomNavigationBar: Material(
@@ -47,7 +73,12 @@ class _AdminHomeScreenState extends State<AdminHomeScreen> {
             ),
             child: BottomNavigationBar(
               currentIndex: _currentIndex,
-              onTap: (index) => setState(() => _currentIndex = index),
+              onTap: (index) {
+                setState(() => _currentIndex = index);
+                if (index == 0) {
+                  _reloadQuickActionsPref();
+                }
+              },
               type: BottomNavigationBarType.fixed,
               selectedItemColor: Colors.white,
               unselectedItemColor: Colors.white54,

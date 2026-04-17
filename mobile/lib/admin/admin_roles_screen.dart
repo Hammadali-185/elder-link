@@ -2,9 +2,9 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 
-import '../services/staff_users_storage.dart';
 import '../widgets/staff_account_avatar.dart';
 import 'admin_live_data.dart';
+import 'staff_display_profile.dart';
 
 class AdminRolesScreen extends StatefulWidget {
   const AdminRolesScreen({super.key});
@@ -49,7 +49,7 @@ class _AdminRolesScreenState extends State<AdminRolesScreen> {
       backgroundColor: _bg,
       appBar: AppBar(
         title: const Text(
-          'ElderLinks',
+          'ElderLink',
           style: TextStyle(fontSize: 22, fontWeight: FontWeight.w800, color: Colors.white),
         ),
         backgroundColor: _deepMint,
@@ -103,7 +103,7 @@ class _AdminRolesScreenState extends State<AdminRolesScreen> {
               ),
               const SizedBox(height: 6),
               Text(
-                'Every saved staff account appears here as a nurse.',
+                'Shows Firebase staff signed in on this device. Use a backend API for all accounts.',
                 style: TextStyle(fontSize: 14, color: _textSecondary),
               ),
               const SizedBox(height: 14),
@@ -152,7 +152,7 @@ class _AdminRolesScreenState extends State<AdminRolesScreen> {
 }
 
 class _NurseRoleCard extends StatelessWidget {
-  final StaffUser nurse;
+  final StaffDisplayProfile nurse;
   final bool isActive;
 
   const _NurseRoleCard({
@@ -187,14 +187,14 @@ class _NurseRoleCard extends StatelessWidget {
         children: [
           Row(
             children: [
-              StaffAccountAvatar(user: nurse, size: 48),
+              StaffAccountAvatar(profile: nurse, size: 48),
               const SizedBox(width: 12),
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      displayStaffName(nurse),
+                      displayStaffProfileName(nurse),
                       style: const TextStyle(
                         fontSize: 16,
                         fontWeight: FontWeight.w800,

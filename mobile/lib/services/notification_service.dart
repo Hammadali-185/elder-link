@@ -1,14 +1,15 @@
+import 'package:elderlink/karachi_time.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 class NotificationService {
   static final FlutterLocalNotificationsPlugin _notifications = FlutterLocalNotificationsPlugin();
   static bool _pushNotifications = true;
-  static bool _emailNotifications = false;
   static bool _criticalAlerts = true;
   static bool _medicineReminders = true;
   static bool _healthUpdates = true;
   static bool _initialized = false;
+  static bool _permissionRequested = false;
 
   static Future<void> initialize() async {
     if (_initialized) return;
@@ -47,10 +48,20 @@ class NotificationService {
         print('Notification tapped: ${details.payload}');
       },
     );
-
-    // Request permissions
-    await _requestPermissions();
     _initialized = true;
+  }
+
+  /// Request OS notification permissions (Android 13+/iOS).
+  ///
+  /// Intentionally separate from [initialize] so app startup is not blocked on
+  /// a permission dialog before the first Flutter frame is drawn.
+  static Future<void> requestPermissions() async {
+    if (_permissionRequested) return;
+    _permissionRequested = true;
+    if (!_initialized) {
+      await initialize();
+    }
+    await _requestPermissions();
   }
 
   static Future<void> _requestPermissions() async {
@@ -70,14 +81,12 @@ class NotificationService {
   static Future<void> load() async {
     final prefs = await SharedPreferences.getInstance();
     _pushNotifications = prefs.getBool('notif_push') ?? true;
-    _emailNotifications = prefs.getBool('notif_email') ?? false;
     _criticalAlerts = prefs.getBool('notif_critical') ?? true;
     _medicineReminders = prefs.getBool('notif_medicine') ?? true;
     _healthUpdates = prefs.getBool('notif_health') ?? true;
   }
 
   static bool get pushNotifications => _pushNotifications;
-  static bool get emailNotifications => _emailNotifications;
   static bool get criticalAlerts => _criticalAlerts;
   static bool get medicineReminders => _medicineReminders;
   static bool get healthUpdates => _healthUpdates;
@@ -106,6 +115,7 @@ class NotificationService {
     String? personName,
     String? timestamp,
     Map<String, dynamic>? payload,
+    bool androidMaxImportance = false,
   }) async {
     if (!shouldNotify(type)) {
       print('Notification blocked: $type notifications are disabled');
@@ -125,12 +135,12 @@ class NotificationService {
       notificationBody += ' • $timestamp';
     }
 
-    const androidDetails = AndroidNotificationDetails(
+    final androidDetails = AndroidNotificationDetails(
       'elderlink_alerts',
       'ElderLink Alerts',
       channelDescription: 'Critical health alerts and emergency notifications',
-      importance: Importance.high,
-      priority: Priority.high,
+      importance: androidMaxImportance ? Importance.max : Importance.high,
+      priority: androidMaxImportance ? Priority.max : Priority.high,
       showWhen: true,
       enableVibration: true,
       playSound: true,
@@ -140,9 +150,10 @@ class NotificationService {
       presentAlert: true,
       presentBadge: true,
       presentSound: true,
+      interruptionLevel: InterruptionLevel.timeSensitive,
     );
 
-    const details = NotificationDetails(
+    final details = NotificationDetails(
       android: androidDetails,
       iOS: iosDetails,
     );
@@ -198,7 +209,7 @@ class NotificationService {
     }
 
     await sendNotification(
-      title: status == 'abnormal' ? '⚠️ Abnormal Health Reading' : 'Health Update',
+      title: status == 'abnormal' ? '⚠️ Abnormal vitals' : 'Health Update',
       body: body,
       type: 'health',
       personName: personName,
@@ -213,9 +224,86 @@ class NotificationService {
     );
   }
 
+  static String _vitalsDetail({
+    required int systolic,
+    required int diastolic,
+    int? heartRate,
+  }) {
+    final parts = <String>[];
+    if (systolic > 0 || diastolic > 0) {
+      parts.add('BP $systolic/$diastolic');
+    }
+    if ((heartRate ?? 0) > 0) {
+      parts.add('HR $heartRate BPM');
+    }
+    return parts.isEmpty ? '' : ' (${parts.join(' · ')})';
+  }
+
+  /// Warning tier (out of range but not BP crisis band).
+  static Future<void> sendVitalsWarningAlert({
+    required String personName,
+    required String alertReason,
+    required DateTime timestamp,
+    int systolic = 0,
+    int diastolic = 0,
+    int? heartRate,
+  }) async {
+    final timeStr = _formatTime(timestamp);
+    final detail = _vitalsDetail(
+      systolic: systolic,
+      diastolic: diastolic,
+      heartRate: heartRate,
+    );
+    await sendNotification(
+      title: '⚠️ Vitals warning',
+      body: '$alertReason$detail',
+      type: 'health',
+      personName: personName,
+      timestamp: timeStr,
+      androidMaxImportance: true,
+      payload: {
+        'type': 'vitals_warning',
+        'personName': personName,
+        'alertReason': alertReason,
+      },
+    );
+  }
+
+  /// Critical BP (e.g. ≥180 systolic or ≥120 diastolic) — highest priority.
+  static Future<void> sendCriticalVitalsAlert({
+    required String personName,
+    required String alertReason,
+    required DateTime timestamp,
+    int systolic = 0,
+    int diastolic = 0,
+    int? heartRate,
+  }) async {
+    final timeStr = _formatTime(timestamp);
+    final detail = _vitalsDetail(
+      systolic: systolic,
+      diastolic: diastolic,
+      heartRate: heartRate,
+    );
+    await sendNotification(
+      title: '🚨 Critical vitals',
+      body: '$alertReason$detail',
+      type: 'critical',
+      personName: personName,
+      timestamp: timeStr,
+      androidMaxImportance: true,
+      payload: {
+        'type': 'vitals_critical',
+        'personName': personName,
+        'alertReason': alertReason,
+      },
+    );
+  }
+
   static String _formatTime(DateTime dateTime) {
-    final hour = dateTime.hour;
-    final minute = dateTime.minute.toString().padLeft(2, '0');
+    ensureKarachiTimeZones();
+    final wall = utcInstantToKarachiWall(dateTime.toUtc());
+    final hour = wall.hour;
+    final minute = wall.minute.toString().padLeft(2, '0');
     final period = hour >= 12 ? 'PM' : 'AM';
     final displayHour = hour > 12 ? hour - 12 : (hour == 0 ? 12 : hour);
     return '$displayHour:$minute $period';

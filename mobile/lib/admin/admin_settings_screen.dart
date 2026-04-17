@@ -1,9 +1,13 @@
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../join_screen.dart';
+import '../screens/backend_settings_screen.dart';
 
 class AdminSettingsScreen extends StatefulWidget {
-  const AdminSettingsScreen({super.key});
+  /// Called after any pref write so e.g. Admin Dashboard can refresh Quick Actions visibility.
+  final VoidCallback? onPrefsChanged;
+
+  const AdminSettingsScreen({super.key, this.onPrefsChanged});
 
   @override
   State<AdminSettingsScreen> createState() => _AdminSettingsScreenState();
@@ -44,25 +48,33 @@ class _AdminSettingsScreenState extends State<AdminSettingsScreen> {
   Future<void> _setNotifications(bool value) async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setBool(_keyNotifications, value);
+    if (!mounted) return;
     setState(() => _notifications = value);
+    widget.onPrefsChanged?.call();
   }
 
   Future<void> _setEmailReports(bool value) async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setBool(_keyEmailReports, value);
+    if (!mounted) return;
     setState(() => _emailReports = value);
+    widget.onPrefsChanged?.call();
   }
 
   Future<void> _setShowActivityOnDashboard(bool value) async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setBool(_keyShowActivityDashboard, value);
+    if (!mounted) return;
     setState(() => _showActivityOnDashboard = value);
+    widget.onPrefsChanged?.call();
   }
 
   Future<void> _setLogRetentionDays(int value) async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setInt(_keyLogRetentionDays, value);
+    if (!mounted) return;
     setState(() => _logRetentionDays = value);
+    widget.onPrefsChanged?.call();
   }
 
   Future<void> _logout() async {
@@ -81,7 +93,7 @@ class _AdminSettingsScreenState extends State<AdminSettingsScreen> {
       backgroundColor: _bg,
       appBar: AppBar(
         title: const Text(
-          'ElderLinks',
+          'ElderLink',
           style: TextStyle(fontSize: 22, fontWeight: FontWeight.w800, color: Colors.white),
         ),
         backgroundColor: _deepMint,
@@ -108,7 +120,29 @@ class _AdminSettingsScreenState extends State<AdminSettingsScreen> {
                 'Preferences for the admin dashboard',
                 style: TextStyle(fontSize: 14, color: _textSecondary),
               ),
+              const SizedBox(height: 12),
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: Colors.blueGrey.shade50,
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: Colors.black.withOpacity(0.06)),
+                ),
+                child: Text(
+                  'These options are saved on this device only; they are not sent to the ElderLink server. '
+                  'Turning off "Show activity on dashboard" hides the Quick Actions section on the Admin Dashboard tab.',
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: _textSecondary,
+                    height: 1.35,
+                  ),
+                ),
+              ),
               const SizedBox(height: 24),
+              _buildSection('Connection'),
+              _buildBackendTile(context),
+              const SizedBox(height: 20),
               _buildSection('General'),
               _buildSettingSwitch(
                 icon: Icons.notifications_active_rounded,
@@ -120,7 +154,7 @@ class _AdminSettingsScreenState extends State<AdminSettingsScreen> {
               _buildSettingSwitch(
                 icon: Icons.dashboard_rounded,
                 title: 'Show activity on dashboard',
-                subtitle: 'Display recent staff activity on admin dashboard',
+                subtitle: 'Show Quick Actions on the Admin Dashboard tab',
                 value: _showActivityOnDashboard,
                 onChanged: _setShowActivityOnDashboard,
               ),
@@ -163,6 +197,70 @@ class _AdminSettingsScreenState extends State<AdminSettingsScreen> {
           fontSize: 16,
           fontWeight: FontWeight.w700,
           color: _textPrimary,
+        ),
+      ),
+    );
+  }
+
+  Widget _buildBackendTile(BuildContext context) {
+    return Material(
+      color: Colors.white,
+      borderRadius: BorderRadius.circular(16),
+      child: InkWell(
+        onTap: () {
+          Navigator.of(context).push(
+            MaterialPageRoute<void>(builder: (_) => const BackendSettingsScreen()),
+          );
+        },
+        borderRadius: BorderRadius.circular(16),
+        child: Container(
+          margin: const EdgeInsets.only(bottom: 12),
+          padding: const EdgeInsets.all(16),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(color: Colors.black.withOpacity(0.04)),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withOpacity(0.06),
+                blurRadius: 12,
+                offset: const Offset(0, 4),
+              ),
+            ],
+          ),
+          child: Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.all(10),
+                decoration: BoxDecoration(
+                  color: _deepMint.withOpacity(0.12),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: const Icon(Icons.dns_rounded, color: _deepMint, size: 22),
+              ),
+              const SizedBox(width: 14),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text(
+                      'Backend server',
+                      style: TextStyle(
+                        fontSize: 15,
+                        fontWeight: FontWeight.w700,
+                        color: _textPrimary,
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      'PC IP & port for API (phone APK)',
+                      style: TextStyle(fontSize: 13, color: Colors.black.withOpacity(0.6)),
+                    ),
+                  ],
+                ),
+              ),
+              Icon(Icons.chevron_right_rounded, color: Colors.black.withOpacity(0.35)),
+            ],
+          ),
         ),
       ),
     );

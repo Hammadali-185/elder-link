@@ -17,6 +17,8 @@ const MusicSessionSchema = new mongoose.Schema(
     title: { type: String, required: true },
     category: { type: String, required: true, index: true },
     startedAt: { type: Date, required: true },
+    /** Refreshed by watch while audio is playing; used to drop stale "now playing" rows. */
+    lastHeartbeatAt: { type: Date, default: null },
     stoppedAt: { type: Date, default: null },
     status: {
       type: String,

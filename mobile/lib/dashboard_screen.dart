@@ -1,12 +1,16 @@
 import 'package:flutter/material.dart';
 import 'dart:async';
+import 'package:elderlink/karachi_time.dart';
 import 'package:fl_chart/fl_chart.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'account_settings_screen.dart';
 import 'services/api_service.dart';
-import 'services/notification_service.dart';
+import 'services/alerts_resolved_prefs.dart';
 import 'services/analytics_service.dart';
 import 'services/data_sharing_service.dart';
 import 'services/auto_lock_service.dart';
+import 'services/staff_reading_filter.dart';
+import 'services/staff_vital_alert_service.dart';
 import 'widgets/avatar_widget.dart';
 
 class DashboardScreen extends StatefulWidget {
@@ -20,15 +24,16 @@ class DashboardScreen extends StatefulWidget {
 
 class _DashboardScreenState extends State<DashboardScreen> {
   List<Reading> _readings = [];
-  Set<String> _notifiedReadings = {}; // Track which readings we've already notified
+  Set<String> _resolvedAlertKeys = {};
   bool _isLoading = true;
   String? _error;
   Timer? _refreshTimer;
-  MusicDashboardSummary? _musicSummary;
-  String? _musicLoadNote;
   @override
   void initState() {
     super.initState();
+    ensureKarachiTimeZones();
+    AlertsResolvedPrefs.resolvedKeysRevision
+        .addListener(_onResolvedKeysRevision);
     _loadReadings();
     AnalyticsService.logScreenView('dashboard');
     _refreshTimer = Timer.periodic(const Duration(seconds: 15), (_) {
@@ -36,8 +41,24 @@ class _DashboardScreenState extends State<DashboardScreen> {
     });
   }
 
+  void _onResolvedKeysRevision() {
+    unawaited(_syncResolvedKeysFromPrefs());
+  }
+
+  Future<void> _syncResolvedKeysFromPrefs() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final list =
+          prefs.getStringList(AlertsResolvedPrefs.resolvedKeysPrefKey);
+      if (!mounted) return;
+      setState(() => _resolvedAlertKeys = list?.toSet() ?? {});
+    } catch (_) {}
+  }
+
   @override
   void dispose() {
+    AlertsResolvedPrefs.resolvedKeysRevision
+        .removeListener(_onResolvedKeysRevision);
     _refreshTimer?.cancel();
     super.dispose();
   }
@@ -47,50 +68,34 @@ class _DashboardScreenState extends State<DashboardScreen> {
       // Update activity for auto-lock
       AutoLockService.updateActivity();
 
+      final prefs = await SharedPreferences.getInstance();
+      final resolvedList =
+          prefs.getStringList(AlertsResolvedPrefs.resolvedKeysPrefKey);
       final readings = await ApiService.getAllReadings();
       if (mounted) {
         setState(() {
           _readings = readings;
+          _resolvedAlertKeys = resolvedList?.toSet() ?? {};
           _isLoading = false;
           _error = null;
         });
         
-        // Check for new readings and send notifications with person details
-        for (final reading in readings) {
-          // Skip if we've already notified about this reading
-          if (_notifiedReadings.contains(reading.id)) continue;
-          
-          final personName = reading.personName ?? reading.username;
-          
-          if (reading.emergency) {
-            // Panic button alert
-            await NotificationService.sendPanicAlert(
-              personName: personName,
-              timestamp: reading.timestamp,
-            );
-            _notifiedReadings.add(reading.id);
-          } else if (reading.status == 'abnormal') {
-            // Abnormal health reading
-            await NotificationService.sendHealthAlert(
-              personName: personName,
-              status: reading.status,
-              bp: reading.bp,
-              heartRate: reading.heartRate,
-              timestamp: reading.timestamp,
-            );
-            _notifiedReadings.add(reading.id);
-          }
-        }
-        
+        await StaffVitalAlertService.processReadings(
+            readingsForStaffDashboard(readings));
+
         // Share data if enabled
-        if (DataSharingService.canShareData() && readings.isNotEmpty) {
-          final latestReading = readings.first;
-          await DataSharingService.shareAnonymizedData({
-            'bp': latestReading.bp,
-            'heartRate': latestReading.heartRate,
-            'status': latestReading.status,
-            'timestamp': latestReading.timestamp.toIso8601String(),
-          });
+        if (DataSharingService.canShareData()) {
+          final snap = readingsForStaffDashboard(readings);
+          if (snap.isNotEmpty) {
+            snap.sort((a, b) => b.timestamp.compareTo(a.timestamp));
+            final latestReading = snap.first;
+            await DataSharingService.shareAnonymizedData({
+              'bp': latestReading.bp,
+              'heartRate': latestReading.heartRate,
+              'status': latestReading.status,
+              'timestamp': latestReading.timestamp.toIso8601String(),
+            });
+          }
         }
       }
     } catch (e) {
@@ -101,238 +106,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
         });
       }
     }
-  }
-
-  String _formatListenDuration(int totalSeconds) {
-    if (totalSeconds <= 0) return '0m';
-    final h = totalSeconds ~/ 3600;
-    final m = (totalSeconds % 3600) ~/ 60;
-    final s = totalSeconds % 60;
-    if (h > 0) return '${h}h ${m}m';
-    if (m > 0) return '${m}m ${s}s';
-    return '${s}s';
-  }
-
-  // ignore: unused_element
-  Widget _buildMusicAnalyticsSection(Color deepMint) {
-    final m = _musicSummary;
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Row(
-          children: [
-            Icon(Icons.headphones, color: deepMint, size: 22),
-            const SizedBox(width: 8),
-            const Text(
-              'Music activity (elders)',
-              style: TextStyle(
-                fontSize: 20,
-                fontWeight: FontWeight.w700,
-                color: Colors.black87,
-              ),
-            ),
-          ],
-        ),
-        const SizedBox(height: 4),
-        Text(
-          m != null
-              ? 'Updates every ~15s · times in UTC'
-              : (_musicLoadNote ?? 'Loading…'),
-          style: TextStyle(fontSize: 12, color: Colors.black.withOpacity(0.55)),
-        ),
-        const SizedBox(height: 12),
-        if (m != null) ...[
-          Row(
-            children: [
-              Expanded(
-                child: _buildStatCard(
-                  'Listening now',
-                  '${m.activeListenersCount}',
-                  Icons.hearing,
-                  deepMint,
-                ),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: _buildStatCard(
-                  'Top category (today)',
-                  m.mostPlayedCategory != null
-                      ? m.mostPlayedCategory!.replaceAll('_', ' ')
-                      : '—',
-                  Icons.category,
-                  Colors.deepPurple,
-                ),
-              ),
-            ],
-          ),
-          if (m.mostPlayedCategorySeconds != null &&
-              m.mostPlayedCategorySeconds! > 0) ...[
-            const SizedBox(height: 6),
-            Text(
-              'Top category time today: ${_formatListenDuration(m.mostPlayedCategorySeconds!)}',
-              style: TextStyle(fontSize: 12, color: Colors.black.withOpacity(0.6)),
-            ),
-          ],
-          const SizedBox(height: 16),
-          const Text(
-            'Now playing',
-            style: TextStyle(
-              fontSize: 16,
-              fontWeight: FontWeight.w600,
-              color: Colors.black87,
-            ),
-          ),
-          const SizedBox(height: 8),
-          if (m.nowPlaying.isEmpty)
-            Container(
-              width: double.infinity,
-              padding: const EdgeInsets.all(16),
-              decoration: BoxDecoration(
-                color: Colors.white,
-                borderRadius: BorderRadius.circular(12),
-                border: Border.all(color: Colors.grey.shade200),
-              ),
-              child: Text(
-                'No active listeners',
-                style: TextStyle(color: Colors.black.withOpacity(0.5)),
-              ),
-            )
-          else
-            ...m.nowPlaying.map((n) => Padding(
-                  padding: const EdgeInsets.only(bottom: 8),
-                  child: Container(
-                    width: double.infinity,
-                    padding: const EdgeInsets.all(14),
-                    decoration: BoxDecoration(
-                      color: Colors.white,
-                      borderRadius: BorderRadius.circular(12),
-                      border: Border.all(color: deepMint.withOpacity(0.35), width: 1.5),
-                      boxShadow: [
-                        BoxShadow(
-                          color: Colors.black.withOpacity(0.04),
-                          blurRadius: 8,
-                          offset: const Offset(0, 2),
-                        ),
-                      ],
-                    ),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          n.elderName,
-                          style: const TextStyle(
-                            fontWeight: FontWeight.w700,
-                            fontSize: 15,
-                            color: Colors.black87,
-                          ),
-                        ),
-                        const SizedBox(height: 4),
-                        Text(
-                          n.title,
-                          style: TextStyle(
-                            fontSize: 14,
-                            color: Colors.black.withOpacity(0.85),
-                          ),
-                        ),
-                        if (n.artist.isNotEmpty)
-                          Text(
-                            n.artist,
-                            style: TextStyle(
-                              fontSize: 12,
-                              color: Colors.black.withOpacity(0.5),
-                            ),
-                          ),
-                        const SizedBox(height: 4),
-                        Text(
-                          'Category: ${n.category.replaceAll('_', ' ')} · Started ${n.playStart.toUtc().toIso8601String().substring(11, 19)} UTC',
-                          style: TextStyle(
-                            fontSize: 11,
-                            color: Colors.black.withOpacity(0.45),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                )),
-          const SizedBox(height: 16),
-          const Text(
-            'Listening today (per elder)',
-            style: TextStyle(
-              fontSize: 16,
-              fontWeight: FontWeight.w600,
-              color: Colors.black87,
-            ),
-          ),
-          const SizedBox(height: 8),
-          if (m.listeningTodaySecondsByElder.isEmpty)
-            Text(
-              'No sessions started yet today (UTC)',
-              style: TextStyle(fontSize: 13, color: Colors.black.withOpacity(0.5)),
-            )
-          else
-            ...m.listeningTodaySecondsByElder.map((e) => Padding(
-                  padding: const EdgeInsets.only(bottom: 6),
-                  child: Row(
-                    children: [
-                      Expanded(
-                        child: Text(
-                          e.elderName,
-                          style: const TextStyle(
-                            fontWeight: FontWeight.w500,
-                            fontSize: 14,
-                          ),
-                        ),
-                      ),
-                      Text(
-                        _formatListenDuration(e.totalSeconds),
-                        style: TextStyle(
-                          fontSize: 14,
-                          fontWeight: FontWeight.w600,
-                          color: deepMint,
-                        ),
-                      ),
-                    ],
-                  ),
-                )),
-          const SizedBox(height: 16),
-          const Text(
-            'Last played (any track)',
-            style: TextStyle(
-              fontSize: 16,
-              fontWeight: FontWeight.w600,
-              color: Colors.black87,
-            ),
-          ),
-          const SizedBox(height: 8),
-          if (m.lastPlayedByElder.isEmpty)
-            Text(
-              'No history yet',
-              style: TextStyle(fontSize: 13, color: Colors.black.withOpacity(0.5)),
-            )
-          else
-            ...m.lastPlayedByElder.take(8).map((e) => Padding(
-                  padding: const EdgeInsets.only(bottom: 6),
-                  child: Row(
-                    children: [
-                      Expanded(
-                        child: Text(
-                          e.elderName,
-                          style: const TextStyle(fontSize: 14),
-                        ),
-                      ),
-                      Text(
-                        e.lastPlayedAt.toUtc().toIso8601String().replaceFirst('T', ' ').substring(0, 19),
-                        style: TextStyle(
-                          fontSize: 12,
-                          color: Colors.black.withOpacity(0.5),
-                        ),
-                      ),
-                    ],
-                  ),
-                )),
-        ],
-      ],
-    );
   }
 
   String _getGreeting() {
@@ -346,36 +119,49 @@ class _DashboardScreenState extends State<DashboardScreen> {
     }
   }
 
+  List<Reading> get _snapshotReadings =>
+      readingsForStaffDashboard(_readings);
+
   int get _criticalAlertsCount {
-    return _readings.where((r) => r.emergency || r.status == 'abnormal').length;
+    return _snapshotReadings
+        .where((r) => r.emergency || r.status == 'abnormal')
+        .where((r) =>
+            !_resolvedAlertKeys.contains(AlertsResolvedPrefs.readingKey(r)))
+        .length;
   }
 
   List<Reading> get _recentReadings {
-    final sorted = List<Reading>.from(_readings);
+    final sorted = List<Reading>.from(_snapshotReadings);
     sorted.sort((a, b) => b.timestamp.compareTo(a.timestamp));
     return sorted.take(5).toList();
   }
 
-  String _formatTime(DateTime dateTime) {
-    final hour = dateTime.hour;
-    final minute = dateTime.minute;
+  /// Same wall-clock rules as [AlertsScreen] and [NotificationService] (Asia/Karachi).
+  String _formatTime(DateTime instant) {
+    final k = utcInstantToKarachiWall(instant);
+    final hour = k.hour;
+    final minute = k.minute;
     final period = hour >= 12 ? 'PM' : 'AM';
     final displayHour = hour > 12 ? hour - 12 : (hour == 0 ? 12 : hour);
     return '${displayHour.toString().padLeft(2, '0')}:${minute.toString().padLeft(2, '0')} $period';
   }
 
-  String _formatDate(DateTime dateTime) {
-    final now = DateTime.now();
-    final today = DateTime(now.year, now.month, now.day);
-    final readingDate = DateTime(dateTime.year, dateTime.month, dateTime.day);
-    
-    if (readingDate == today) {
+  DateTime _dateOnlyKarachi(DateTime d) => DateTime(d.year, d.month, d.day);
+
+  String _formatDate(DateTime instant) {
+    final k = utcInstantToKarachiWall(instant);
+    final nowK = nowKarachiWallClock();
+    final readingDay = _dateOnlyKarachi(k);
+    final todayK = _dateOnlyKarachi(nowK);
+    final yesterdayK = todayK.subtract(const Duration(days: 1));
+
+    if (readingDay == todayK) {
       return 'Today';
-    } else if (readingDate == today.subtract(const Duration(days: 1))) {
-      return 'Yesterday';
-    } else {
-      return '${dateTime.day}/${dateTime.month}/${dateTime.year}';
     }
+    if (readingDay == yesterdayK) {
+      return 'Yesterday';
+    }
+    return '${k.day}/${k.month}/${k.year}';
   }
 
   String _formatReadingSummary(Reading reading) {
@@ -401,7 +187,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
       backgroundColor: const Color(0xFFF6FFFA),
       appBar: AppBar(
         title: const Text(
-          'ElderLinks',
+          'ElderLink',
           style: TextStyle(
             fontSize: 22,
             fontWeight: FontWeight.w800,
@@ -522,7 +308,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
                                 Text(
-                                  _readings.isEmpty
+                                  _snapshotReadings.isEmpty
                                       ? 'No data available yet'
                                       : 'Here\'s today\'s care snapshot.',
                                   style: const TextStyle(
@@ -636,13 +422,13 @@ class _DashboardScreenState extends State<DashboardScreen> {
                           ),
                           const SizedBox(height: 16),
                           // Statistics Cards
-                          if (_readings.isNotEmpty) ...[
+                          if (_snapshotReadings.isNotEmpty) ...[
                             Row(
                               children: [
                                 Expanded(
                                   child: _buildStatCard(
                                     'Total Readings',
-                                    '${_readings.length}',
+                                    '${_snapshotReadings.length}',
                                     Icons.favorite,
                                     Colors.red,
                                   ),
@@ -651,7 +437,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                                 Expanded(
                                   child: _buildStatCard(
                                     'Normal',
-                                    '${_readings.where((r) => r.status == 'normal').length}',
+                                    '${_snapshotReadings.where((r) => r.status == 'normal').length}',
                                     Icons.check_circle,
                                     Colors.green,
                                   ),
@@ -664,7 +450,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                                 Expanded(
                                   child: _buildStatCard(
                                     'Abnormal',
-                                    '${_readings.where((r) => r.status == 'abnormal').length}',
+                                    '${_snapshotReadings.where((r) => r.status == 'abnormal').length}',
                                     Icons.warning,
                                     Colors.orange,
                                   ),
@@ -673,7 +459,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                                 Expanded(
                                   child: _buildStatCard(
                                     'Emergencies',
-                                    '${_readings.where((r) => r.emergency).length}',
+                                    '${_snapshotReadings.where((r) => r.emergency).length}',
                                     Icons.emergency,
                                     Colors.red,
                                   ),
@@ -681,7 +467,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
                               ],
                             ),
                             const SizedBox(height: 12),
-                            // Blood Pressure Statistics
                             Row(
                               children: [
                                 Expanded(
@@ -695,32 +480,10 @@ class _DashboardScreenState extends State<DashboardScreen> {
                                 const SizedBox(width: 12),
                                 Expanded(
                                   child: _buildBPStatCard(
-                                    'Latest BP',
-                                    _getLatestBP(),
-                                    Icons.trending_up,
-                                    _getLatestBPColor(),
-                                  ),
-                                ),
-                              ],
-                            ),
-                            const SizedBox(height: 12),
-                            Row(
-                              children: [
-                                Expanded(
-                                  child: _buildBPStatCard(
                                     'Avg HR',
                                     _getAverageHeartRate(),
                                     Icons.favorite,
                                     Colors.pink,
-                                  ),
-                                ),
-                                const SizedBox(width: 12),
-                                Expanded(
-                                  child: _buildBPStatCard(
-                                    'Latest HR',
-                                    _getLatestHeartRate(),
-                                    Icons.monitor_heart_outlined,
-                                    _getLatestHeartRateColor(),
                                   ),
                                 ),
                               ],
@@ -834,59 +597,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
                                 ),
                               );
                             }),
-                          const SizedBox(height: 28),
-                          // Primary CTA
-                          SizedBox(
-                            width: double.infinity,
-                            child: FilledButton(
-                              style: FilledButton.styleFrom(
-                                backgroundColor: _criticalAlertsCount > 0 ? Colors.red : deepMint,
-                                foregroundColor: Colors.white,
-                                padding: const EdgeInsets.symmetric(vertical: 16),
-                                shape: RoundedRectangleBorder(
-                                  borderRadius: BorderRadius.circular(14),
-                                ),
-                                elevation: 2,
-                              ),
-                              onPressed: () {
-                                // Navigate to alerts
-                              },
-                              child: Text(
-                                _criticalAlertsCount > 0
-                                    ? 'View $_criticalAlertsCount Alert${_criticalAlertsCount > 1 ? 's' : ''}'
-                                    : 'View All Readings',
-                                style: const TextStyle(
-                                  fontSize: 16,
-                                  fontWeight: FontWeight.w700,
-                                ),
-                              ),
-                            ),
-                          ),
-                          const SizedBox(height: 12),
-                          // Secondary CTA
-                          SizedBox(
-                            width: double.infinity,
-                            child: OutlinedButton(
-                              style: OutlinedButton.styleFrom(
-                                foregroundColor: deepMint,
-                                side: BorderSide(color: deepMint, width: 2),
-                                padding: const EdgeInsets.symmetric(vertical: 16),
-                                shape: RoundedRectangleBorder(
-                                  borderRadius: BorderRadius.circular(14),
-                                ),
-                              ),
-                              onPressed: () {
-                                // Navigate to timeline
-                              },
-                              child: const Text(
-                                'Open Care Timeline',
-                                style: TextStyle(
-                                  fontSize: 16,
-                                  fontWeight: FontWeight.w600,
-                                ),
-                              ),
-                            ),
-                          ),
                           const SizedBox(height: 20),
                         ],
                       ),
@@ -997,17 +707,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
               color: Colors.black.withOpacity(0.6),
             ),
           ),
-          if (value != 'N/A' && label == 'Latest BP')
-            Padding(
-              padding: const EdgeInsets.only(top: 4),
-              child: Text(
-                'mmHg',
-                style: TextStyle(
-                  fontSize: 10,
-                  color: Colors.black.withOpacity(0.4),
-                ),
-              ),
-            ),
         ],
       ),
     );
@@ -1290,37 +989,16 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
   // Get average BP from all readings
   String _getAverageBP() {
-    final readingsWithBP = _readings.where((r) => r.bp > 0).toList();
+    final readingsWithBP = _snapshotReadings.where((r) => r.bp > 0).toList();
     if (readingsWithBP.isEmpty) return 'N/A';
     
     final avg = readingsWithBP.map((r) => r.bp).reduce((a, b) => a + b) / readingsWithBP.length;
     return '${avg.round()}';
   }
 
-  // Get latest BP value
-  String _getLatestBP() {
-    final readingsWithBP = _readings.where((r) => r.bp > 0).toList();
-    if (readingsWithBP.isEmpty) return 'N/A';
-    
-    readingsWithBP.sort((a, b) => b.timestamp.compareTo(a.timestamp));
-    return '${readingsWithBP.first.bp}';
-  }
-
-  // Get color for latest BP (red if high, green if normal)
-  Color _getLatestBPColor() {
-    final readingsWithBP = _readings.where((r) => r.bp > 0).toList();
-    if (readingsWithBP.isEmpty) return Colors.grey;
-    
-    readingsWithBP.sort((a, b) => b.timestamp.compareTo(a.timestamp));
-    final latestBP = readingsWithBP.first.bp;
-    
-    if (latestBP >= 140) return Colors.red;
-    if (latestBP >= 120) return Colors.orange;
-    return Colors.green;
-  }
-
   String _getAverageHeartRate() {
-    final readingsWithHeartRate = _readings.where((r) => r.heartRate > 0).toList();
+    final readingsWithHeartRate =
+        _snapshotReadings.where((r) => r.heartRate > 0).toList();
     if (readingsWithHeartRate.isEmpty) return 'N/A';
 
     final avg = readingsWithHeartRate
@@ -1330,31 +1008,12 @@ class _DashboardScreenState extends State<DashboardScreen> {
     return '${avg.round()}';
   }
 
-  String _getLatestHeartRate() {
-    final readingsWithHeartRate = _readings.where((r) => r.heartRate > 0).toList();
-    if (readingsWithHeartRate.isEmpty) return 'N/A';
-
-    readingsWithHeartRate.sort((a, b) => b.timestamp.compareTo(a.timestamp));
-    return '${readingsWithHeartRate.first.heartRate}';
-  }
-
-  Color _getLatestHeartRateColor() {
-    final readingsWithHeartRate = _readings.where((r) => r.heartRate > 0).toList();
-    if (readingsWithHeartRate.isEmpty) return Colors.grey;
-
-    readingsWithHeartRate.sort((a, b) => b.timestamp.compareTo(a.timestamp));
-    final latestHeartRate = readingsWithHeartRate.first.heartRate;
-
-    if (latestHeartRate < 50 || latestHeartRate > 110) return Colors.orange;
-    return Colors.pink;
-  }
-
   // Get BP data grouped by elder
   List<Map<String, dynamic>> _getElderBPData() {
     final Map<String, List<Reading>> elderReadings = {};
     
     // Group readings by elder name
-    for (final reading in _readings.where((r) => r.bp > 0)) {
+    for (final reading in _snapshotReadings.where((r) => r.bp > 0)) {
       final elderName = reading.personName ?? reading.username;
       if (!elderReadings.containsKey(elderName)) {
         elderReadings[elderName] = [];
@@ -1388,7 +1047,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
   List<Map<String, dynamic>> _getElderHeartRateData() {
     final Map<String, List<Reading>> elderReadings = {};
 
-    for (final reading in _readings.where((r) => r.heartRate > 0)) {
+    for (final reading in _snapshotReadings.where((r) => r.heartRate > 0)) {
       final elderName = reading.personName ?? reading.username;
       elderReadings.putIfAbsent(elderName, () => []);
       elderReadings[elderName]!.add(reading);
@@ -1420,7 +1079,9 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
   // Get abnormal activity data for graph (grouped by hour)
   List<Map<String, dynamic>> _getAbnormalActivityData() {
-    final abnormalReadings = _readings.where((r) => r.status == 'abnormal' || r.emergency).toList();
+    final abnormalReadings = _snapshotReadings
+        .where((r) => r.status == 'abnormal' || r.emergency)
+        .toList();
     if (abnormalReadings.isEmpty) return [];
     
     // Group by hour for the last 24 hours

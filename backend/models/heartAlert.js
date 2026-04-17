@@ -2,6 +2,11 @@ const mongoose = require("mongoose");
 
 const heartAlertSchema = new mongoose.Schema(
   {
+    elderId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Elder",
+      index: true,
+    },
     username: {
       type: String,
       required: true,

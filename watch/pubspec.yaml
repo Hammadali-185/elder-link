@@ -15,6 +15,7 @@ dependencies:
   shared_preferences: ^2.2.2
   just_audio: ^0.10.5
   audio_session: ^0.2.3
+  timezone: ^0.10.0
 
 dev_dependencies:
   flutter_test:

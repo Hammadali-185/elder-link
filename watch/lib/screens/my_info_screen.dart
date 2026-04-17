@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import '../services/api_service.dart';
 import '../services/medicine_schedule_monitor.dart';
+import '../services/music_player_service.dart';
 
 class MyInfoScreen extends StatefulWidget {
   final VoidCallback? onBackTap;
@@ -60,28 +61,30 @@ class _MyInfoScreenState extends State<MyInfoScreen> {
   }
 
   Future<void> _saveInfo() async {
-    if (_formKey.currentState?.validate() ?? false) {
-      final previousName = ApiService.userName?.trim() ?? '';
-      final newName = _nameCtrl.text.trim();
-      ApiService.updateUserInfo(
-        name: _nameCtrl.text,
-        gender: _gender,
-        age: _ageCtrl.text,
-        disease: _diseaseCtrl.text,
-        roomNumber: _roomNumberCtrl.text,
-      );
-      if (previousName != newName) {
-        MedicineScheduleMonitor.instance.onUserIdentityChanged();
-      }
-      await ApiService.syncElderProfileToServer();
-      if (!mounted) return;
-      setState(() {
-        _saved = true;
-      });
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Info saved')),
-      );
+    if (!(_formKey.currentState?.validate() ?? false)) return;
+    final previousName = ApiService.userName?.trim() ?? '';
+    final newName = _nameCtrl.text.trim();
+    if (previousName.isNotEmpty && previousName != newName) {
+      await MusicPlayerService.instance.stop();
     }
+    ApiService.updateUserInfo(
+      name: _nameCtrl.text,
+      gender: _gender,
+      age: _ageCtrl.text,
+      disease: _diseaseCtrl.text,
+      roomNumber: _roomNumberCtrl.text,
+    );
+    if (previousName != newName) {
+      MedicineScheduleMonitor.instance.onUserIdentityChanged();
+    }
+    await ApiService.syncElderProfileToServer();
+    if (!mounted) return;
+    setState(() {
+      _saved = true;
+    });
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Info saved')),
+    );
   }
 
   @override

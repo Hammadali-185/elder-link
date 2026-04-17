@@ -2,11 +2,12 @@ import 'dart:async';
 
 import 'package:flutter/foundation.dart';
 
+import '../karachi_time.dart';
 import 'alert_service.dart';
 import 'api_service.dart';
 
-/// Polls medicines in the background and fires [AlertService] only when local clock
-/// reaches each pending dose time (not when staff adds a medicine).
+/// Polls medicines in the background and fires [AlertService] when **Asia/Karachi**
+/// wall time reaches each pending dose `HH:mm` (not when staff adds a medicine).
 ///
 /// UI listens to [activeMedicine]; alarm runs on any screen until user acts.
 class MedicineScheduleMonitor {
@@ -16,7 +17,14 @@ class MedicineScheduleMonitor {
   /// Currently shown dose; null = no overlay.
   final ValueNotifier<WatchMedicine?> activeMedicine = ValueNotifier<WatchMedicine?>(null);
 
+  /// Pending dose alarms after the current one (same due window).
+  final ValueNotifier<int> medicineQueuedCount = ValueNotifier<int>(0);
+
   final List<WatchMedicine> _queue = <WatchMedicine>[];
+
+  void _syncQueueCount() {
+    medicineQueuedCount.value = _queue.length;
+  }
 
   /// One alert per medicine + calendar day + scheduled HH:mm.
   final Set<String> _firedSlotKeys = <String>{};
@@ -24,13 +32,13 @@ class MedicineScheduleMonitor {
   Timer? _timer;
   bool _started = false;
 
-  /// How long after the scheduled minute we still consider "due" (covers 30s poll).
-  static const int _dueWindowMinutes = 4;
+  /// How long after the scheduled minute we still consider "due" (covers poll interval).
+  static const int _dueWindowMinutes = 5;
 
   void start() {
     if (_started) return;
     _started = true;
-    _timer = Timer.periodic(const Duration(seconds: 30), (_) => unawaited(_tick()));
+    _timer = Timer.periodic(const Duration(seconds: 15), (_) => unawaited(_tick()));
     unawaited(_tick());
   }
 
@@ -45,6 +53,7 @@ class MedicineScheduleMonitor {
   void onUserIdentityChanged() {
     _firedSlotKeys.clear();
     _queue.clear();
+    _syncQueueCount();
     if (activeMedicine.value != null) {
       unawaited(AlertService.stopAlert());
       activeMedicine.value = null;
@@ -52,15 +61,15 @@ class MedicineScheduleMonitor {
   }
 
   Future<void> _tick() async {
-    final name = ApiService.userName?.trim();
-    if (name == null || name.isEmpty) return;
+    final activeId = ApiService.activeElderMongoId?.trim();
+    if (activeId == null || activeId.isEmpty) return;
 
-    final now = DateTime.now();
+    final now = nowKarachiWallClock();
     final today = DateTime(now.year, now.month, now.day);
 
     List<WatchMedicine> list;
     try {
-      list = await ApiService.getMedicines(date: now);
+      list = await ApiService.getMedicines();
     } catch (_) {
       return;
     }
@@ -68,11 +77,8 @@ class MedicineScheduleMonitor {
     for (final m in list) {
       if (m.status != 'pending') continue;
 
-      final scheduledDay = DateTime(
-        m.scheduledDate.year,
-        m.scheduledDate.month,
-        m.scheduledDate.day,
-      );
+      final sk = utcInstantToKarachiWall(m.scheduledDate.toUtc());
+      final scheduledDay = DateTime(sk.year, sk.month, sk.day);
       if (scheduledDay != today) continue;
 
       if (!_isNowInDueWindow(m.time, now)) continue;
@@ -134,9 +140,13 @@ class MedicineScheduleMonitor {
   }
 
   void _presentNextQueued() {
-    if (_queue.isEmpty) return;
+    if (_queue.isEmpty) {
+      _syncQueueCount();
+      return;
+    }
     final next = _queue.removeAt(0);
     activeMedicine.value = next;
+    _syncQueueCount();
     unawaited(AlertService.startAlert());
   }
 }

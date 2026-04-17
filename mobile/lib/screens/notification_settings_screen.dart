@@ -11,7 +11,6 @@ class NotificationSettingsScreen extends StatefulWidget {
 
 class _NotificationSettingsScreenState extends State<NotificationSettingsScreen> {
   bool _pushNotifications = true;
-  bool _emailNotifications = false;
   bool _criticalAlerts = true;
   bool _medicineReminders = true;
   bool _healthUpdates = true;
@@ -27,7 +26,6 @@ class _NotificationSettingsScreenState extends State<NotificationSettingsScreen>
     final prefs = await SharedPreferences.getInstance();
     setState(() {
       _pushNotifications = prefs.getBool('notif_push') ?? true;
-      _emailNotifications = prefs.getBool('notif_email') ?? false;
       _criticalAlerts = prefs.getBool('notif_critical') ?? true;
       _medicineReminders = prefs.getBool('notif_medicine') ?? true;
       _healthUpdates = prefs.getBool('notif_health') ?? true;
@@ -42,7 +40,6 @@ class _NotificationSettingsScreenState extends State<NotificationSettingsScreen>
     try {
       final prefs = await SharedPreferences.getInstance();
       await prefs.setBool('notif_push', _pushNotifications);
-      await prefs.setBool('notif_email', _emailNotifications);
       await prefs.setBool('notif_critical', _criticalAlerts);
       await prefs.setBool('notif_medicine', _medicineReminders);
       await prefs.setBool('notif_health', _healthUpdates);
@@ -112,14 +109,6 @@ class _NotificationSettingsScreenState extends State<NotificationSettingsScreen>
               value: _pushNotifications,
               onChanged: (val) => setState(() => _pushNotifications = val),
               icon: Icons.notifications_active,
-            ),
-            const SizedBox(height: 12),
-            _buildSwitchTile(
-              title: 'Email Notifications',
-              subtitle: 'Receive notifications via email',
-              value: _emailNotifications,
-              onChanged: (val) => setState(() => _emailNotifications = val),
-              icon: Icons.email,
             ),
             const SizedBox(height: 24),
             const Text(

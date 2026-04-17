@@ -1,5 +1,6 @@
-import 'package:flutter/foundation.dart' show kIsWeb;
+import 'package:flutter/foundation.dart' show kDebugMode, kIsWeb;
 import 'package:flutter/material.dart';
+import 'package:elderlink/karachi_time.dart';
 import 'package:flutter/services.dart';
 import 'package:vibration/vibration.dart';
 import 'dart:async';
@@ -14,9 +15,15 @@ class ClockScreen extends StatefulWidget {
 }
 
 class _ClockScreenState extends State<ClockScreen> {
+  /// Same waveform as [AlertService] — Wear-friendly repeating segment until [Vibration.cancel].
+  static const List<int> _kRingPattern = [0, 1000, 400, 1000, 400];
+  static const List<int> _kRingIntensities = [0, 255, 0, 255, 0];
+
   Timer? _timer;
   Timer? _clockTimer;
   Timer? _ringTimer;
+  /// Periodic haptics if the vibration plugin is weak on Wear (matches medicine alert cadence).
+  Timer? _hapticPulseTimer;
   int _secondsRemaining = 0;
   bool _isRunning = false;
   bool _isRinging = false;
@@ -30,6 +37,8 @@ class _ClockScreenState extends State<ClockScreen> {
   @override
   void initState() {
     super.initState();
+    ensureKarachiTimeZones();
+    _currentTime = nowKarachiWallClock();
     _startClock();
   }
 
@@ -37,7 +46,7 @@ class _ClockScreenState extends State<ClockScreen> {
     _clockTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
       if (mounted) {
         setState(() {
-          _currentTime = DateTime.now();
+          _currentTime = nowKarachiWallClock();
         });
       }
     });
@@ -91,44 +100,147 @@ class _ClockScreenState extends State<ClockScreen> {
     }
   }
 
-  void _ringAlarm() async {
+  void _ringAlarm() {
+    if (kDebugMode) {
+      debugPrint('ClockScreen: _ringAlarm triggered');
+    }
+
+    _ringTimer?.cancel();
+    _hapticPulseTimer?.cancel();
+
     setState(() {
       _isRinging = true;
     });
 
-    // Vibrate (skip on web - no plugin implementation)
-    if (!kIsWeb) {
-      try {
-        if (await Vibration.hasVibrator() ?? false) {
-          Vibration.vibrate(pattern: [0, 500, 500, 500], repeat: 1);
-        }
-      } catch (_) {}
+    if (kIsWeb) {
+      _startBeepSequence(isWeb: true);
+      return;
     }
 
-    // Play alarm sound repeatedly
-    int beepCount = 0;
-    _ringTimer = Timer.periodic(const Duration(milliseconds: 600), (timer) {
-      if (beepCount < 15) { // Ring for 9 seconds (15 beeps)
-        // Play system alert sound
-        SystemSound.play(SystemSoundType.alert);
-        HapticFeedback.mediumImpact();
-        beepCount++;
-      } else {
-        timer.cancel();
-        setState(() {
-          _isRinging = false;
-        });
+    try {
+      HapticFeedback.heavyImpact();
+      if (kDebugMode) {
+        debugPrint('ClockScreen: immediate HapticFeedback.heavyImpact() fired');
+      }
+    } catch (e, st) {
+      debugPrint('ClockScreen: immediate heavyImpact failed: $e\n$st');
+    }
+
+    unawaited(_startNativeVibrationPlugin());
+    _startHapticPulseFallback();
+    _startBeepSequence(isWeb: false);
+  }
+
+  /// Tries amplitude pattern, then plain pattern, then one-shot duration — never uses [Vibration.hasVibrator].
+  Future<void> _startNativeVibrationPlugin() async {
+    if (kDebugMode) {
+      debugPrint('ClockScreen: before Vibration.vibrate (with intensities)');
+    }
+    try {
+      await Vibration.vibrate(
+        pattern: _kRingPattern,
+        intensities: _kRingIntensities,
+        repeat: 0,
+      );
+      if (kDebugMode) {
+        debugPrint('ClockScreen: after Vibration.vibrate (with intensities) — invoke returned');
+      }
+    } catch (e, st) {
+      debugPrint(
+        'ClockScreen: Vibration.vibrate with intensities failed: $e\n$st',
+      );
+      if (kDebugMode) {
+        debugPrint('ClockScreen: retry Vibration.vibrate (pattern only)');
+      }
+      try {
+        await Vibration.vibrate(pattern: _kRingPattern, repeat: 0);
+        if (kDebugMode) {
+          debugPrint('ClockScreen: after Vibration.vibrate (pattern only)');
+        }
+      } catch (e2, st2) {
+        debugPrint(
+          'ClockScreen: Vibration.vibrate pattern-only failed: $e2\n$st2',
+        );
+        if (kDebugMode) {
+          debugPrint('ClockScreen: retry Vibration.vibrate (duration 1200ms)');
+        }
+        try {
+          await Vibration.vibrate(duration: 1200);
+          if (kDebugMode) {
+            debugPrint('ClockScreen: after Vibration.vibrate (duration)');
+          }
+        } catch (e3, st3) {
+          debugPrint(
+            'ClockScreen: Vibration.vibrate duration fallback failed: $e3\n$st3',
+          );
+        }
+      }
+    }
+  }
+
+  void _startHapticPulseFallback() {
+    _hapticPulseTimer?.cancel();
+    _hapticPulseTimer = Timer.periodic(const Duration(milliseconds: 1300), (_) {
+      try {
+        HapticFeedback.heavyImpact();
+        if (kDebugMode) {
+          debugPrint('ClockScreen: periodic heavyImpact (1300ms fallback)');
+        }
+      } catch (e, st) {
+        debugPrint('ClockScreen: periodic heavyImpact failed: $e\n$st');
       }
     });
   }
 
+  void _startBeepSequence({required bool isWeb}) {
+    var beepCount = 0;
+    _ringTimer = Timer.periodic(const Duration(milliseconds: 600), (timer) {
+      if (beepCount < 15) {
+        SystemSound.play(SystemSoundType.alert);
+        if (!isWeb) {
+          try {
+            HapticFeedback.heavyImpact();
+          } catch (e, st) {
+            debugPrint('ClockScreen: beep heavyImpact failed: $e\n$st');
+          }
+        }
+        beepCount++;
+      } else {
+        timer.cancel();
+        _ringTimer = null;
+        _cancelHapticPulseAndPluginVibration();
+        if (mounted) {
+          setState(() {
+            _isRinging = false;
+          });
+        }
+      }
+    });
+  }
+
+  void _cancelHapticPulseAndPluginVibration() {
+    _hapticPulseTimer?.cancel();
+    _hapticPulseTimer = null;
+    if (!kIsWeb) {
+      unawaited(_cancelVibrationLogged());
+    }
+  }
+
+  Future<void> _cancelVibrationLogged() async {
+    try {
+      await Vibration.cancel();
+      if (kDebugMode) {
+        debugPrint('ClockScreen: Vibration.cancel() ok');
+      }
+    } catch (e, st) {
+      debugPrint('ClockScreen: Vibration.cancel() failed: $e\n$st');
+    }
+  }
+
   void _stopRing() {
     _ringTimer?.cancel();
-    if (!kIsWeb) {
-      try {
-        Vibration.cancel();
-      } catch (_) {}
-    }
+    _ringTimer = null;
+    _cancelHapticPulseAndPluginVibration();
     setState(() {
       _isRinging = false;
     });
@@ -203,10 +315,11 @@ class _ClockScreenState extends State<ClockScreen> {
     _timer?.cancel();
     _clockTimer?.cancel();
     _ringTimer?.cancel();
+    _ringTimer = null;
+    _hapticPulseTimer?.cancel();
+    _hapticPulseTimer = null;
     if (!kIsWeb) {
-      try {
-        Vibration.cancel();
-      } catch (_) {}
+      unawaited(_cancelVibrationLogged());
     }
     super.dispose();
   }

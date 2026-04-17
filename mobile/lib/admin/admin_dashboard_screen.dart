@@ -1,13 +1,26 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 import 'admin_live_data.dart';
+import 'staff_display_profile.dart';
 
 class AdminDashboardScreen extends StatefulWidget {
   final void Function(int index)? onNavigateToTab;
 
-  const AdminDashboardScreen({super.key, this.onNavigateToTab});
+  /// When false, Quick Actions cards are hidden (see [admin_settings_show_activity]).
+  final ValueListenable<bool> showQuickActionsListenable;
+
+  /// Re-read SharedPreferences so pull-to-refresh picks up Admin Settings changes.
+  final Future<void> Function()? onReloadQuickActionsPref;
+
+  const AdminDashboardScreen({
+    super.key,
+    this.onNavigateToTab,
+    required this.showQuickActionsListenable,
+    this.onReloadQuickActionsPref,
+  });
 
   @override
   State<AdminDashboardScreen> createState() => _AdminDashboardScreenState();
@@ -38,6 +51,11 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
     });
   }
 
+  Future<void> _onRefresh() async {
+    await _loadSnapshot();
+    await widget.onReloadQuickActionsPref?.call();
+  }
+
   @override
   Widget build(BuildContext context) {
     const deepMint = Color(0xFF17A2A2);
@@ -49,7 +67,7 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
       backgroundColor: bg,
       appBar: AppBar(
         title: const Text(
-          'ElderLinks',
+          'ElderLink',
           style: TextStyle(
             fontSize: 22,
             fontWeight: FontWeight.w800,
@@ -83,7 +101,7 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
       ),
       body: SafeArea(
         child: RefreshIndicator(
-          onRefresh: _loadSnapshot,
+          onRefresh: _onRefresh,
           child: SingleChildScrollView(
             physics: const AlwaysScrollableScrollPhysics(),
             padding: const EdgeInsets.all(20),
@@ -155,35 +173,46 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
                     ),
                   ],
                 ),
-                const SizedBox(height: 28),
-                Text(
-                  'Quick Actions',
-                  style: TextStyle(
-                    fontSize: 18,
-                    fontWeight: FontWeight.w700,
-                    color: textPrimary,
-                  ),
-                ),
-                const SizedBox(height: 6),
-                Text(
-                  'Manage nurses and view live status',
-                  style: TextStyle(fontSize: 14, color: textSecondary),
-                ),
-                const SizedBox(height: 16),
-                _buildQuickActionCard(
-                  icon: Icons.medical_services_rounded,
-                  title: 'View Nurses',
-                  subtitle: 'Open the live nurse roster',
-                  color: deepMint,
-                  onTap: () => widget.onNavigateToTab?.call(1),
-                ),
-                const SizedBox(height: 12),
-                _buildQuickActionCard(
-                  icon: Icons.analytics_rounded,
-                  title: 'View Realtime Status',
-                  subtitle: 'See current nurse session and updates',
-                  color: Colors.teal,
-                  onTap: () => widget.onNavigateToTab?.call(3),
+                ValueListenableBuilder<bool>(
+                  valueListenable: widget.showQuickActionsListenable,
+                  builder: (context, showQuick, _) {
+                    if (!showQuick) return const SizedBox.shrink();
+                    return Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const SizedBox(height: 28),
+                        Text(
+                          'Quick Actions',
+                          style: TextStyle(
+                            fontSize: 18,
+                            fontWeight: FontWeight.w700,
+                            color: textPrimary,
+                          ),
+                        ),
+                        const SizedBox(height: 6),
+                        Text(
+                          'Manage nurses and view live status',
+                          style: TextStyle(fontSize: 14, color: textSecondary),
+                        ),
+                        const SizedBox(height: 16),
+                        _buildQuickActionCard(
+                          icon: Icons.medical_services_rounded,
+                          title: 'View Nurses',
+                          subtitle: 'Open the live nurse roster',
+                          color: deepMint,
+                          onTap: () => widget.onNavigateToTab?.call(1),
+                        ),
+                        const SizedBox(height: 12),
+                        _buildQuickActionCard(
+                          icon: Icons.analytics_rounded,
+                          title: 'View Realtime Status',
+                          subtitle: 'See current nurse session and updates',
+                          color: Colors.teal,
+                          onTap: () => widget.onNavigateToTab?.call(3),
+                        ),
+                      ],
+                    );
+                  },
                 ),
                 const SizedBox(height: 28),
                 Text(
@@ -200,7 +229,7 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
                 else
                   _buildQuickActionCard(
                     icon: Icons.person_pin_circle_rounded,
-                    title: displayStaffName(_snapshot!.activeNurse!),
+                    title: displayStaffProfileName(_snapshot!.activeNurse!),
                     subtitle: 'Logged in as nurse right now',
                     color: Colors.green,
                     onTap: () => widget.onNavigateToTab?.call(1),

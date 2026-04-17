@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 
 import 'admin_live_data.dart';
+import 'staff_display_profile.dart';
 
 class AdminLogsScreen extends StatefulWidget {
   const AdminLogsScreen({super.key});
@@ -47,7 +48,7 @@ class _AdminLogsScreenState extends State<AdminLogsScreen> {
       backgroundColor: _bg,
       appBar: AppBar(
         title: const Text(
-          'ElderLinks',
+          'ElderLink',
           style: TextStyle(fontSize: 22, fontWeight: FontWeight.w800, color: Colors.white),
         ),
         backgroundColor: _deepMint,
@@ -85,7 +86,7 @@ class _AdminLogsScreenState extends State<AdminLogsScreen> {
                 _LogCard(
                   title: _snapshot!.activeNurse == null
                       ? 'No nurse is signed in'
-                      : '${displayStaffName(_snapshot!.activeNurse!)} is active now',
+                      : '${displayStaffProfileName(_snapshot!.activeNurse!)} is active now',
                   subtitle: _snapshot!.activeNurse == null
                       ? 'The admin panel is waiting for a live nurse session.'
                       : 'Current session is using the live nurse account.',
@@ -102,7 +103,7 @@ class _AdminLogsScreenState extends State<AdminLogsScreen> {
                   subtitle: _snapshot!.nurses.isEmpty
                       ? 'No live nurse accounts are available yet.'
                       : _snapshot!.nurses
-                          .map(displayStaffName)
+                          .map(displayStaffProfileName)
                           .join(', '),
                   badge: 'Roster',
                   color: _deepMint,

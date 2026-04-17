@@ -1,6 +1,10 @@
 const express = require("express");
 const router = express.Router();
 const controller = require("../controllers/readingController");
+const elderController = require("../controllers/elderController");
+
+router.post("/admin/purge-elder", elderController.purgeElderData);
+router.post("/admin/purgeelder", elderController.purgeElderData);
 
 router.post("/", controller.createReading);
 router.get("/", controller.getReadings);

@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:audio_session/audio_session.dart';
 import 'package:flutter/foundation.dart';
 import 'package:just_audio/just_audio.dart';
@@ -19,6 +21,7 @@ class MusicPlayerService extends ChangeNotifier {
   String? _lastError;
   bool _inited = false;
   int _playbackGen = 0;
+  Timer? _musicHeartbeatTimer;
 
   AudioPlayer get player => _player;
 
@@ -45,6 +48,12 @@ class MusicPlayerService extends ChangeNotifier {
           androidAudioFocusGainType: AndroidAudioFocusGainType.gain,
         ),
       );
+      session.interruptionEventStream.listen((event) {
+        if (!reportSessionsToBackend) return;
+        if (event.begin) {
+          unawaited(stop());
+        }
+      });
     } catch (e) {
       if (kDebugMode) {
         // ignore: avoid_print
@@ -66,6 +75,31 @@ class MusicPlayerService extends ChangeNotifier {
         ApiService.endMusicSessionMeta('completed');
       }
     });
+
+    _player.playingStream.listen((playing) {
+      if (!reportSessionsToBackend) return;
+      if (playing) {
+        _startMusicHeartbeat();
+      } else {
+        _stopMusicHeartbeat();
+      }
+    });
+  }
+
+  void _startMusicHeartbeat() {
+    _musicHeartbeatTimer?.cancel();
+    if (!reportSessionsToBackend) return;
+    ApiService.pingMusicSession();
+    _musicHeartbeatTimer = Timer.periodic(const Duration(seconds: 40), (_) {
+      if (_player.playing) {
+        ApiService.pingMusicSession();
+      }
+    });
+  }
+
+  void _stopMusicHeartbeat() {
+    _musicHeartbeatTimer?.cancel();
+    _musicHeartbeatTimer = null;
   }
 
   /// After a medicine alarm, re-apply media routing so the music player is not stuck on alarm usage.
@@ -133,7 +167,6 @@ class MusicPlayerService extends ChangeNotifier {
         notifyListeners();
         return;
       }
-      await _player.play();
       if (reportSessionsToBackend &&
           gen == _playbackGen &&
           _lastError == null) {
@@ -144,6 +177,7 @@ class MusicPlayerService extends ChangeNotifier {
           category: track.category,
         );
       }
+      await _player.play();
     } catch (e) {
       _lastError = e.toString();
       notifyListeners();
@@ -162,7 +196,6 @@ class MusicPlayerService extends ChangeNotifier {
         if (_player.processingState == ProcessingState.completed) {
           await _player.seek(Duration.zero);
         }
-        await _player.play();
         if (reportSessionsToBackend) {
           final t = currentTrack;
           if (t != null) {
@@ -174,6 +207,7 @@ class MusicPlayerService extends ChangeNotifier {
             );
           }
         }
+        await _player.play();
       }
     } catch (e) {
       _lastError = e.toString();
@@ -183,6 +217,7 @@ class MusicPlayerService extends ChangeNotifier {
 
   Future<void> stop() async {
     await ensureInitialized();
+    _stopMusicHeartbeat();
     try {
       await _player.stop();
       if (reportSessionsToBackend) {

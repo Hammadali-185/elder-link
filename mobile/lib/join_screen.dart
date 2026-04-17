@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
-import 'select_staff_account_screen.dart';
-import 'elder_home_screen.dart';
+
 import 'admin/admin_login_screen.dart';
+import 'auth/screens/firebase_login_screen.dart';
 
 class JoinScreen extends StatelessWidget {
   const JoinScreen({super.key});
@@ -131,35 +131,14 @@ class JoinScreen extends StatelessWidget {
                               color: deepMint,
                               onTap: () {
                                 Navigator.of(context).push(
-                                  MaterialPageRoute(
-                                    builder: (_) =>
-                                        const SelectStaffAccountScreen(),
+                                  MaterialPageRoute<void>(
+                                    builder: (_) => const FirebaseLoginScreen(),
                                   ),
                                 );
                               },
                             ),
                           ),
                           const SizedBox(width: 12),
-                          Expanded(
-                            child: _RoleCard(
-                              title: 'Elder',
-                              subtitle: 'For personal use',
-                              icon: Icons.favorite,
-                              color: mint,
-                              onTap: () {
-                                Navigator.of(context).push(
-                                  MaterialPageRoute(
-                                    builder: (_) => const ElderHomeScreen(),
-                                  ),
-                                );
-                              },
-                            ),
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: 12),
-                      Row(
-                        children: [
                           Expanded(
                             child: _RoleCard(
                               title: 'Admin',

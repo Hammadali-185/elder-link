@@ -1,23 +1,23 @@
 import 'package:flutter/material.dart';
-import 'package:shared_preferences/shared_preferences.dart';
-import 'services/staff_users_storage.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+
+import 'auth/providers/auth_providers.dart';
+import 'screens/backend_settings_screen.dart';
 import 'staff_gate_nav.dart';
 
-class SettingsScreen extends StatelessWidget {
+class SettingsScreen extends ConsumerWidget {
   const SettingsScreen({super.key});
 
-  Future<void> _handleLogout(BuildContext context) async {
-    final prefs = await SharedPreferences.getInstance();
-    await StaffUsersStorage.logoutSession(prefs);
-
-    if (context.mounted) {
-      await replaceRouteAfterStaffLogout(context);
-    }
-  }
-
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
     const deepMint = Color(0xFF17A2A2);
+
+    Future<void> handleLogout() async {
+      await ref.read(authServiceProvider).signOut();
+      if (context.mounted) {
+        await replaceRouteAfterStaffLogout(context);
+      }
+    }
 
     return Scaffold(
       backgroundColor: const Color(0xFFF6FFFA),
@@ -40,7 +40,17 @@ class SettingsScreen extends StatelessWidget {
       body: ListView(
         padding: const EdgeInsets.all(20),
         children: [
-          // Logout button
+          ListTile(
+            leading: const Icon(Icons.dns_rounded, color: deepMint),
+            title: const Text('Backend server'),
+            subtitle: const Text('PC IP & port for API (required on phone APK)'),
+            onTap: () {
+              Navigator.of(context).push(
+                MaterialPageRoute<void>(builder: (_) => const BackendSettingsScreen()),
+              );
+            },
+          ),
+          const Divider(),
           Container(
             width: double.infinity,
             margin: const EdgeInsets.only(top: 20),
@@ -53,7 +63,7 @@ class SettingsScreen extends StatelessWidget {
                   borderRadius: BorderRadius.circular(14),
                 ),
               ),
-              onPressed: () => _handleLogout(context),
+              onPressed: handleLogout,
               child: const Text(
                 'Log Out',
                 style: TextStyle(

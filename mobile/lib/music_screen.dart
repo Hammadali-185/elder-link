@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:elderlink/karachi_time.dart';
 
 import 'account_settings_screen.dart';
 import 'services/api_service.dart';
@@ -31,8 +32,9 @@ class _MusicScreenState extends State<MusicScreen> {
   @override
   void initState() {
     super.initState();
+    ensureKarachiTimeZones();
     _loadPanel();
-    _refreshTimer = Timer.periodic(const Duration(seconds: 20), (_) {
+    _refreshTimer = Timer.periodic(const Duration(seconds: 5), (_) {
       _loadPanel(showLoading: false);
     });
   }
@@ -67,7 +69,7 @@ class _MusicScreenState extends State<MusicScreen> {
       backgroundColor: _bg,
       appBar: AppBar(
         title: const Text(
-          'ElderLinks',
+          'ElderLink',
           style: TextStyle(
             fontSize: 22,
             fontWeight: FontWeight.w800,
@@ -228,7 +230,7 @@ class _MusicScreenState extends State<MusicScreen> {
           ),
           const SizedBox(height: 12),
           Text(
-            '${summary.activeListenersCount} elder${summary.activeListenersCount == 1 ? '' : 's'} listening now',
+            '${summary.nowPlaying.length} elder${summary.nowPlaying.length == 1 ? '' : 's'} listening now',
             style: TextStyle(
               fontSize: 18,
               fontWeight: FontWeight.w700,
@@ -316,14 +318,7 @@ class _MusicScreenState extends State<MusicScreen> {
         if (summary.nowPlaying.isEmpty)
           _buildEmptyCard('No elder is listening right now.')
         else
-          ...summary.nowPlaying.map((item) {
-            return _infoCard(
-              leading: Icons.play_circle_fill_rounded,
-              title: item.elderName,
-              subtitle:
-                  '${item.title}  ${_formatCategory(item.category)}  Started ${_formatDateTime(item.playStart)}',
-            );
-          }),
+          ...summary.nowPlaying.map((item) => _buildNowPlayingCard(item)),
       ],
     );
   }
@@ -344,7 +339,7 @@ class _MusicScreenState extends State<MusicScreen> {
             return _infoCard(
               leading: Icons.person,
               title: item.elderName,
-              subtitle: 'Listening time today: ${_formatDuration(item.totalSeconds)}',
+              detail: 'Listening time today: ${_formatDuration(item.totalSeconds)}',
               trailing: Text(
                 _formatDuration(item.totalSeconds),
                 style: TextStyle(
@@ -368,10 +363,13 @@ class _MusicScreenState extends State<MusicScreen> {
           _buildEmptyCard('No completed listening session yet.')
         else
           ...summary.lastPlayedByElder.take(8).map((item) {
+            final range = (item.lastStartedAt != null && item.lastStoppedAt != null)
+                ? _formatTimeRange(item.lastStartedAt!, item.lastStoppedAt!)
+                : _formatDateTime(item.lastPlayedAt);
             return _infoCard(
               leading: Icons.access_time,
               title: item.elderName,
-              subtitle: 'Last listened at ${_formatDateTime(item.lastPlayedAt)}',
+              detail: range,
             );
           }),
       ],
@@ -395,10 +393,72 @@ class _MusicScreenState extends State<MusicScreen> {
     );
   }
 
+  Widget _buildNowPlayingCard(MusicNowPlayingDto item) {
+    return Container(
+      margin: const EdgeInsets.only(bottom: 12),
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: _cardBg,
+        borderRadius: BorderRadius.circular(16),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.05),
+            blurRadius: 12,
+            offset: const Offset(0, 4),
+          ),
+        ],
+        border: Border.all(color: Colors.black.withValues(alpha: 0.04)),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Container(
+            padding: const EdgeInsets.all(10),
+            decoration: BoxDecoration(
+              color: _deepMint.withValues(alpha: 0.12),
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: Icon(Icons.play_circle_fill_rounded, color: _deepMint),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  item.elderName,
+                  style: TextStyle(
+                    fontSize: 15,
+                    fontWeight: FontWeight.w700,
+                    color: _textPrimary,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  '${item.title} ï¿½ ${_formatCategory(item.category)}',
+                  style: TextStyle(fontSize: 12, color: _textSecondary),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  _formatDateTime(item.playStart),
+                  style: TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                    color: _textSecondary,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _infoCard({
     required IconData leading,
     required String title,
-    required String subtitle,
+    required String detail,
     Widget? trailing,
   }) {
     return Container(
@@ -441,7 +501,7 @@ class _MusicScreenState extends State<MusicScreen> {
                 ),
                 const SizedBox(height: 4),
                 Text(
-                  subtitle,
+                  detail,
                   style: TextStyle(
                     fontSize: 12,
                     color: _textSecondary,
@@ -524,11 +584,30 @@ class _MusicScreenState extends State<MusicScreen> {
     return '${d.inSeconds}s';
   }
 
+  /// Wall clock in Asia/Karachi (no zone label in the string).
   String _formatDateTime(DateTime dt) {
-    final local = dt.toLocal();
-    final hour = local.hour > 12 ? local.hour - 12 : (local.hour == 0 ? 12 : local.hour);
-    final minute = local.minute.toString().padLeft(2, '0');
-    final suffix = local.hour >= 12 ? 'PM' : 'AM';
-    return '${local.day}/${local.month} $hour:$minute $suffix';
+    final w = utcInstantToKarachiWall(dt);
+    final hour = w.hour > 12 ? w.hour - 12 : (w.hour == 0 ? 12 : w.hour);
+    final minute = w.minute.toString().padLeft(2, '0');
+    final suffix = w.hour >= 12 ? 'PM' : 'AM';
+    return '${w.day}/${w.month}/${w.year} ï¿½ $hour:$minute $suffix';
+  }
+
+  String _formatTimeRange(DateTime startUtc, DateTime endUtc) {
+    final s = utcInstantToKarachiWall(startUtc);
+    final e = utcInstantToKarachiWall(endUtc);
+    final sameDay = s.year == e.year && s.month == e.month && s.day == e.day;
+
+    String fmtTime(DateTime w) {
+      final hour = w.hour > 12 ? w.hour - 12 : (w.hour == 0 ? 12 : w.hour);
+      final minute = w.minute.toString().padLeft(2, '0');
+      final suffix = w.hour >= 12 ? 'PM' : 'AM';
+      return '$hour:$minute $suffix';
+    }
+
+    if (sameDay) {
+      return '${s.day}/${s.month}/${s.year} ï¿½ ${fmtTime(s)} - ${fmtTime(e)}';
+    }
+    return '${s.day}/${s.month}/${s.year} ï¿½ ${fmtTime(s)} - ${e.day}/${e.month}/${e.year} ï¿½ ${fmtTime(e)}';
   }
 }

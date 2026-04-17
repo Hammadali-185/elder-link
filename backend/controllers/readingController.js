@@ -1,18 +1,23 @@
 const Reading = require("../models/reading");
+const { resolveElderIdForWatchPayload } = require("../utils/elderResolve");
 
 exports.createReading = async (req, res) => {
   try {
     console.log('Received request body:', JSON.stringify(req.body, null, 2));
-    const reading = new Reading(req.body);
+    const elderOid = await resolveElderIdForWatchPayload(req.body);
+    const payload = { ...req.body };
+    if (elderOid) payload.elderId = elderOid;
+    const reading = new Reading(payload);
     const saved = await reading.save();
     console.log('Reading saved successfully:', saved._id);
     res.status(201).json(saved);
   } catch (error) {
     console.error('Error creating reading:', error.message);
     console.error('Error details:', error);
-    res.status(400).json({ 
+    const code = error.status || 400;
+    res.status(code).json({
       error: error.message,
-      details: error.errors || 'Validation failed'
+      details: error.errors || 'Validation failed',
     });
   }
 };

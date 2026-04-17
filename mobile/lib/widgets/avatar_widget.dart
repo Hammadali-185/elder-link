@@ -1,7 +1,9 @@
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-import '../services/staff_users_storage.dart';
+import '../auth/staff_profile_repository.dart';
+import '../services/staff_avatar_local.dart';
 import 'avatar_image_io.dart' if (dart.library.html) 'avatar_image_web.dart'
     as avatar_image;
 
@@ -20,27 +22,22 @@ class AvatarWidget extends StatelessWidget {
     return FutureBuilder<Map<String, dynamic>>(
       future: _getAvatarData(),
       builder: (context, snapshot) {
-        final avatarType = snapshot.data?['type'] ?? 'male';
+        final avatarType = snapshot.data?['type'] ?? 'neutral';
         final imagePath = snapshot.data?['imagePath'] as String?;
         final imageBase64 = snapshot.data?['imageBase64'] as String?;
-        final isMale = avatarType == 'male';
         final isCustom = avatarType == 'custom';
         final Color bgColor = (imagePath == null || imagePath.isEmpty) &&
                 (imageBase64 == null || imageBase64.isEmpty)
             ? (isCustom
-                ? Colors.grey.withOpacity(0.2)
-                : (isMale
-                    ? Colors.blue.withOpacity(0.25)
-                    : Colors.pink.withOpacity(0.25)))
+                ? Colors.grey.withValues(alpha: 0.2)
+                : Colors.blueGrey.withValues(alpha: 0.14))
             : Colors.transparent;
-        final Color iconColor = isCustom
-            ? Colors.grey.shade700
-            : (isMale ? Colors.blue.shade800 : Colors.pink.shade700);
-        final IconData defaultIcon =
-            isCustom ? Icons.person : (isMale ? Icons.man : Icons.woman);
+        final Color iconColor =
+            isCustom ? Colors.grey.shade700 : Colors.blueGrey.shade800;
+        final IconData defaultIcon = Icons.person;
         final Color borderColor = (imagePath == null || imagePath.isEmpty) &&
                 (imageBase64 == null || imageBase64.isEmpty)
-            ? (isCustom ? Colors.grey : (isMale ? Colors.blue : Colors.pink))
+            ? (isCustom ? Colors.grey : Colors.blueGrey.shade300)
             : Colors.white;
 
         return Container(
@@ -55,7 +52,7 @@ class AvatarWidget extends StatelessWidget {
             ),
             boxShadow: [
               BoxShadow(
-                color: Colors.black.withOpacity(0.1),
+                color: Colors.black.withValues(alpha: 0.1),
                 blurRadius: 4,
                 offset: const Offset(0, 2),
               ),
@@ -74,12 +71,15 @@ class AvatarWidget extends StatelessWidget {
   }
 
   Future<Map<String, dynamic>> _getAvatarData() async {
+    final u = FirebaseAuth.instance.currentUser;
+    if (u == null) {
+      return {'type': 'neutral', 'imagePath': null, 'imageBase64': null};
+    }
     final prefs = await SharedPreferences.getInstance();
     await prefs.reload();
-    final user = await StaffUsersStorage.resolveCurrentUser(prefs);
-    if (user == null) {
-      return {'type': 'male', 'imagePath': null, 'imageBase64': null};
-    }
-    return StaffUsersStorage.getUserAvatarPreview(prefs, user);
+    final repo = StaffProfileRepository();
+    final profile = await repo.fetchProfile(u.uid);
+    final preset = profile?.avatarPreset ?? 'neutral';
+    return StaffAvatarLocal.getPreview(prefs, u.uid, preset);
   }
 }

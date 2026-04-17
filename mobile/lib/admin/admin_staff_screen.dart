@@ -2,9 +2,9 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 
-import '../services/staff_users_storage.dart';
 import '../widgets/staff_account_avatar.dart';
 import 'admin_live_data.dart';
+import 'staff_display_profile.dart';
 
 class AdminStaffScreen extends StatefulWidget {
   const AdminStaffScreen({super.key});
@@ -48,7 +48,7 @@ class _AdminStaffScreenState extends State<AdminStaffScreen> {
     return Scaffold(
       backgroundColor: bg,
       appBar: AppBar(
-        title: const Text('ElderLinks', style: TextStyle(fontSize: 22, fontWeight: FontWeight.w800, color: Colors.white)),
+        title: const Text('ElderLink', style: TextStyle(fontSize: 22, fontWeight: FontWeight.w800, color: Colors.white)),
         backgroundColor: deepMint,
         foregroundColor: Colors.white,
         surfaceTintColor: Colors.transparent,
@@ -71,10 +71,14 @@ class _AdminStaffScreenState extends State<AdminStaffScreen> {
               ),
               const SizedBox(height: 6),
               Text(
-                'Live nurse accounts used by staff',
+                'Staff profiles from Firestore (each nurse appears after they sign in once)',
                 style: TextStyle(fontSize: 14, color: textSecondary),
               ),
               const SizedBox(height: 20),
+              if (_snapshot?.rosterNote != null) ...[
+                _buildEmptyCard(_snapshot!.rosterNote!),
+                const SizedBox(height: 16),
+              ],
               if (_snapshot == null)
                 const Padding(
                   padding: EdgeInsets.symmetric(vertical: 80),
@@ -123,7 +127,7 @@ class _AdminStaffScreenState extends State<AdminStaffScreen> {
 }
 
 class _NurseCard extends StatelessWidget {
-  final StaffUser nurse;
+  final StaffDisplayProfile nurse;
   final bool isActive;
   final DateTime refreshedAt;
 
@@ -156,14 +160,14 @@ class _NurseCard extends StatelessWidget {
       ),
       child: Row(
         children: [
-          StaffAccountAvatar(user: nurse, size: 52),
+          StaffAccountAvatar(profile: nurse, size: 52),
           const SizedBox(width: 14),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  displayStaffName(nurse),
+                  displayStaffProfileName(nurse),
                   style: const TextStyle(
                     fontSize: 16,
                     fontWeight: FontWeight.w800,
@@ -172,7 +176,7 @@ class _NurseCard extends StatelessWidget {
                 ),
                 const SizedBox(height: 2),
                 Text(
-                  '@${nurse.username}',
+                  nurse.accountLabel,
                   style: TextStyle(fontSize: 13, color: Colors.black.withValues(alpha: 0.62)),
                 ),
                 const SizedBox(height: 6),

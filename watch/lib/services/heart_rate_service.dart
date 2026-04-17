@@ -87,10 +87,8 @@ class HeartRateService {
               // Notify listeners
               onHeartRateUpdate?.call(heartRate);
               
-              // Check for abnormal values
-              if (heartRate < 50 || heartRate > 110) {
-                print('⚠️ Abnormal heart rate detected: $heartRate bpm');
-                onAbnormalHeartRate?.call(heartRate);
+              if (heartRate < 60 || heartRate > 100) {
+                print('⚠️ Out-of-range heart rate: $heartRate bpm');
               }
             },
             onError: (error) {

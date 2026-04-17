@@ -1,47 +1,112 @@
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+
+import 'auth/providers/auth_providers.dart';
+import 'auth/screens/firebase_login_screen.dart';
+import 'auth/screens/firebase_sign_up_screen.dart';
+import 'auth/staff_sign_out.dart';
+import 'firebase_options.dart';
 import 'join_screen.dart';
 import 'staff_home_screen.dart';
-import 'select_staff_account_screen.dart';
-import 'staff_login_screen.dart';
 import 'admin/admin_home_screen.dart';
-import 'services/staff_users_storage.dart';
 import 'services/notification_service.dart';
 import 'services/auto_lock_service.dart';
 import 'services/analytics_service.dart';
 import 'services/data_sharing_service.dart';
+import 'services/api_service.dart';
+import 'package:elderlink/karachi_time.dart';
 import 'package:elderlink/services/music_player_service.dart';
 
-/// Whether staff/admin session is restored from [SharedPreferences] in **debug** builds.
-///
-/// - **Release/profile:** login persistence always follows stored `staff_logged_in` /
-///   `admin_logged_in` (this flag is ignored).
-/// - **Debug:** when this is `false` (default), those flags are ignored on startup so every
-///   run starts at the welcome flow even if you logged in last time—prefs are still written,
-///   they are just not read for routing.
-/// - Set to `true` when you want hot restart / full restart to keep you logged in like production.
-const bool kAllowSavedLoginInDebug = true;
+/// Debug-only: when false, [AuthWrapper] signs staff out once on cold start so you always
+/// land on the welcome flow. Firebase still persists until this runs.
+const bool kAllowSavedStaffLoginInDebug = true;
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  await MusicPlayerService.instance.ensureInitialized();
+  // Avoid [core/duplicate-app] on some Android setups where Firebase may already be
+  // initialized by the platform before Dart runs.
+  if (Firebase.apps.isEmpty) {
+    await Firebase.initializeApp(
+      options: DefaultFirebaseOptions.currentPlatform,
+    );
+  }
+  ensureKarachiTimeZones();
 
-  // Initialize notification service first
-  await NotificationService.initialize();
-  
-  // Load all services
-  await NotificationService.load();
-  await AnalyticsService.load();
-  await DataSharingService.load();
-  
-  runApp(const MobileApp());
+  runApp(
+    const ProviderScope(
+      child: MobileApp(),
+    ),
+  );
+}
+
+class _StartupInit extends StatefulWidget {
+  final Widget child;
+  const _StartupInit({required this.child});
+
+  @override
+  State<_StartupInit> createState() => _StartupInitState();
+}
+
+class _StartupInitState extends State<_StartupInit> {
+  bool _started = false;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    if (_started) return;
+    _started = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _runDeferredInit();
+    });
+  }
+
+  Future<void> _runDeferredInit() async {
+    try {
+      await ApiService.loadNetworkConfig();
+      await ApiService.loadSavedElderUserInfo();
+      ApiService.debugLogEndpoint();
+    } catch (_) {}
+
+    try {
+      await MusicPlayerService.instance.ensureInitialized();
+    } catch (_) {}
+
+    try {
+      await NotificationService.initialize();
+      await NotificationService.load();
+      // Ask for OS permission only after UI is visible; do not block startup.
+      // ignore: unawaited_futures
+      NotificationService.requestPermissions();
+    } catch (_) {}
+
+    try {
+      await AnalyticsService.load();
+    } catch (_) {}
+
+    try {
+      await DataSharingService.load();
+    } catch (_) {}
+
+    if (kDebugMode && !kAllowSavedStaffLoginInDebug) {
+      try {
+        await signOutStaffEverywhere();
+      } catch (_) {}
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) => widget.child;
 }
 
 class MobileApp extends StatelessWidget {
-  /// After staff logout with existing accounts: account picker (via [AuthWrapper]).
+  /// After staff logout: show Firebase login as root (optional; usually auth state handles UI).
   final bool openStaffLogin;
-  /// After staff logout with no accounts: signup screen only.
+
+  /// After staff logout: show Firebase sign-up as root.
   final bool openStaffSignup;
 
   const MobileApp({
@@ -52,7 +117,7 @@ class MobileApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    const seed = Color(0xFF90EE90); // light green
+    const seed = Color(0xFF90EE90);
     const deepMint = Color(0xFF17A2A2);
     return MaterialApp(
       debugShowCheckedModeBanner: false,
@@ -67,15 +132,17 @@ class MobileApp extends StatelessWidget {
           elevation: 2,
         ),
       ),
-      home: AuthWrapper(
-        openStaffLogin: openStaffLogin,
-        openStaffSignup: openStaffSignup,
+      home: _StartupInit(
+        child: AuthWrapper(
+          openStaffLogin: openStaffLogin,
+          openStaffSignup: openStaffSignup,
+        ),
       ),
     );
   }
 }
 
-class AuthWrapper extends StatefulWidget {
+class AuthWrapper extends ConsumerStatefulWidget {
   final bool openStaffLogin;
   final bool openStaffSignup;
 
@@ -86,62 +153,62 @@ class AuthWrapper extends StatefulWidget {
   });
 
   @override
-  State<AuthWrapper> createState() => _AuthWrapperState();
+  ConsumerState<AuthWrapper> createState() => _AuthWrapperState();
 }
 
-class _AuthWrapperState extends State<AuthWrapper> {
-  bool _isLoading = true;
-  bool _isLoggedIn = false;
+class _AuthWrapperState extends ConsumerState<AuthWrapper> {
+  bool _prefsLoaded = false;
   bool _isAdminLoggedIn = false;
   bool _showLogoSplash = true;
-  /// User chose back from post-logout staff login → show welcome flow.
   bool _dismissedPostLogoutStaffLogin = false;
+  /// Avoid resetting inactivity on every [build] while signed in (that prevented auto-lock).
+  bool _staffAutoLockSessionStarted = false;
 
   @override
   void initState() {
     super.initState();
-    _checkLoginStatus();
+    _loadAdminPrefs();
   }
 
-  Future<void> _checkLoginStatus() async {
+  Future<void> _loadAdminPrefs() async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.reload();
-    final useSavedLogin = !kDebugMode || kAllowSavedLoginInDebug;
-    bool adminLoggedIn = false;
-    bool staffLoggedIn = false;
-
-    if (useSavedLogin) {
-      adminLoggedIn = prefs.getBool('admin_logged_in') ?? false;
-      if (!adminLoggedIn) {
-        final staffUser = await StaffUsersStorage.validateSessionOrReturnUser(prefs);
-        staffLoggedIn = staffUser != null;
-      }
+    final useSaved = !kDebugMode || kAllowSavedStaffLoginInDebug;
+    var admin = false;
+    if (useSaved) {
+      admin = prefs.getBool('admin_logged_in') ?? false;
     }
-
-    if (kDebugMode && !kAllowSavedLoginInDebug) {
-      print(
-        'AuthWrapper - Debug: ignoring saved login (set kAllowSavedLoginInDebug = true in main.dart to persist)',
-      );
-    } else {
-      print(
-        'AuthWrapper - Staff session valid: $staffLoggedIn, Admin logged in: $adminLoggedIn',
-      );
-    }
-
+    if (!mounted) return;
     setState(() {
-      _isLoggedIn = staffLoggedIn;
-      _isAdminLoggedIn = adminLoggedIn;
-      _isLoading = false;
+      _isAdminLoggedIn = admin;
+      _prefsLoaded = true;
     });
+  }
+
+  void _onAutoLockSignOut() {
+    if (!mounted) return;
+    signOutStaffEverywhere();
+    Navigator.of(context, rootNavigator: true).popUntil((r) => r.isFirst);
   }
 
   @override
   Widget build(BuildContext context) {
-    if (_isLoading) {
+    ref.listen<AsyncValue<User?>>(authStateProvider, (prev, next) {
+      final wasOut = prev?.valueOrNull == null;
+      final nowIn = next.valueOrNull != null;
+      if (wasOut && nowIn) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (!mounted) return;
+          Navigator.of(context, rootNavigator: true).popUntil((r) => r.isFirst);
+        });
+      }
+    });
+
+    final authAsync = ref.watch(authStateProvider);
+
+    if (!_prefsLoaded || authAsync.isLoading) {
       return const Scaffold(
-        body: Center(
-          child: CircularProgressIndicator(),
-        ),
+        body: Center(child: CircularProgressIndicator()),
       );
     }
 
@@ -149,34 +216,29 @@ class _AuthWrapperState extends State<AuthWrapper> {
       return const AdminHomeScreen();
     }
 
-    if (_isLoggedIn) {
-      AutoLockService.initialize(() {
-        if (mounted) {
-          SharedPreferences.getInstance().then((p) async {
-            await StaffUsersStorage.logoutSession(p);
-            if (!context.mounted) return;
-            final prefs = await SharedPreferences.getInstance();
-            final users = await StaffUsersStorage.getUsers(prefs);
-            if (!context.mounted) return;
-            Navigator.of(context).pushAndRemoveUntil(
-              MaterialPageRoute<void>(
-                builder: (_) => users.isEmpty
-                    ? const MobileApp(openStaffSignup: true)
-                    : const MobileApp(openStaffLogin: true),
-              ),
-              (route) => false,
-            );
-          });
-        }
-      });
-      AutoLockService.updateActivity();
+    final firebaseUser = authAsync.valueOrNull;
+    if (firebaseUser != null) {
+      if (!_staffAutoLockSessionStarted) {
+        _staffAutoLockSessionStarted = true;
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (!mounted) return;
+          // ignore: discarded_futures
+          AutoLockService.initialize(_onAutoLockSignOut);
+          AutoLockService.updateActivity();
+        });
+      }
       return const StaffHomeScreen();
     }
+
+    if (_staffAutoLockSessionStarted) {
+      _staffAutoLockSessionStarted = false;
+      AutoLockService.dispose();
+    }
+
     if (widget.openStaffSignup &&
         !_dismissedPostLogoutStaffLogin &&
         !_isAdminLoggedIn) {
-      return StaffLoginScreen(
-        initialSignUp: true,
+      return FirebaseSignUpScreen(
         onRootBack: () {
           setState(() {
             _dismissedPostLogoutStaffLogin = true;
@@ -188,7 +250,7 @@ class _AuthWrapperState extends State<AuthWrapper> {
     if (widget.openStaffLogin &&
         !_dismissedPostLogoutStaffLogin &&
         !_isAdminLoggedIn) {
-      return SelectStaffAccountScreen(
+      return FirebaseLoginScreen(
         onRootBack: () {
           setState(() {
             _dismissedPostLogoutStaffLogin = true;
@@ -250,6 +312,7 @@ class _LogoSplashScreenState extends State<_LogoSplashScreen>
     const deepMint = Color(0xFF17A2A2);
     const mint = Color(0xFF90EE90);
     return Scaffold(
+      backgroundColor: const Color(0xFFFAFFFC),
       body: Container(
         width: double.infinity,
         height: double.infinity,
@@ -258,9 +321,9 @@ class _LogoSplashScreenState extends State<_LogoSplashScreen>
             begin: Alignment.topLeft,
             end: Alignment.bottomRight,
             colors: [
-              Color(0xFFF6FFFA),
-              Color(0xFFE9FFF1),
-              Color(0xFFD8FBE2),
+              Color(0xFFFFFFFF),
+              Color(0xFFF8FFFB),
+              Color(0xFFEFFAF3),
             ],
           ),
         ),
@@ -277,16 +340,16 @@ class _LogoSplashScreenState extends State<_LogoSplashScreen>
                   decoration: BoxDecoration(
                     gradient: LinearGradient(
                       colors: [
-                        mint.withOpacity(0.5),
-                        deepMint.withOpacity(0.35),
+                        mint.withValues(alpha: 0.28),
+                        deepMint.withValues(alpha: 0.18),
                       ],
                     ),
                     shape: BoxShape.circle,
                     boxShadow: [
                       BoxShadow(
-                        color: deepMint.withOpacity(0.25),
-                        blurRadius: 24,
-                        offset: const Offset(0, 8),
+                        color: deepMint.withValues(alpha: 0.10),
+                        blurRadius: 14,
+                        offset: const Offset(0, 4),
                       ),
                     ],
                   ),
@@ -333,7 +396,6 @@ class WelcomeScreen extends StatelessWidget {
     return Scaffold(
       body: Stack(
         children: [
-          // Soft gradient background (mobile-friendly)
           Container(
             decoration: const BoxDecoration(
               gradient: LinearGradient(
@@ -347,7 +409,6 @@ class WelcomeScreen extends StatelessWidget {
               ),
             ),
           ),
-          // Subtle glow blobs
           Positioned(
             top: -120,
             left: -80,
@@ -355,7 +416,7 @@ class WelcomeScreen extends StatelessWidget {
               width: 260,
               height: 260,
               decoration: BoxDecoration(
-                color: mint.withOpacity(0.35),
+                color: mint.withValues(alpha: 0.35),
                 shape: BoxShape.circle,
               ),
             ),
@@ -367,7 +428,7 @@ class WelcomeScreen extends StatelessWidget {
               width: 300,
               height: 300,
               decoration: BoxDecoration(
-                color: deepMint.withOpacity(0.18),
+                color: deepMint.withValues(alpha: 0.18),
                 shape: BoxShape.circle,
               ),
             ),
@@ -381,16 +442,15 @@ class WelcomeScreen extends StatelessWidget {
                   child: Column(
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: [
-                      // Hero card
                       Container(
                         padding: const EdgeInsets.all(20),
                         decoration: BoxDecoration(
-                          color: Colors.white.withOpacity(0.9),
+                          color: Colors.white.withValues(alpha: 0.9),
                           borderRadius: BorderRadius.circular(24),
-                          border: Border.all(color: Colors.white.withOpacity(0.8)),
+                          border: Border.all(color: Colors.white.withValues(alpha: 0.8)),
                           boxShadow: [
                             BoxShadow(
-                              color: Colors.black.withOpacity(0.06),
+                              color: Colors.black.withValues(alpha: 0.06),
                               blurRadius: 24,
                               offset: const Offset(0, 10),
                             ),
@@ -405,8 +465,8 @@ class WelcomeScreen extends StatelessWidget {
                               decoration: BoxDecoration(
                                 gradient: LinearGradient(
                                   colors: [
-                                    mint.withOpacity(0.55),
-                                    deepMint.withOpacity(0.25),
+                                    mint.withValues(alpha: 0.55),
+                                    deepMint.withValues(alpha: 0.25),
                                   ],
                                 ),
                                 shape: BoxShape.circle,
@@ -433,13 +493,12 @@ class WelcomeScreen extends StatelessWidget {
                               'A calm, simple companion for care, reminders, and safety.',
                               textAlign: TextAlign.center,
                               style: TextStyle(
-                                color: Colors.black.withOpacity(0.60),
+                                color: Colors.black.withValues(alpha: 0.60),
                                 fontSize: 14.5,
                                 height: 1.35,
                               ),
                             ),
                             const SizedBox(height: 18),
-                            // Small feature chips
                             Wrap(
                               alignment: WrapAlignment.center,
                               spacing: 8,
@@ -454,7 +513,6 @@ class WelcomeScreen extends StatelessWidget {
                         ),
                       ),
                       const SizedBox(height: 18),
-                      // Primary button
                       SizedBox(
                         width: double.infinity,
                         child: FilledButton.icon(
@@ -506,21 +564,21 @@ class _FeatureChip extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
       decoration: BoxDecoration(
-        color: const Color(0xFF90EE90).withOpacity(0.22),
+        color: const Color(0xFF90EE90).withValues(alpha: 0.22),
         borderRadius: BorderRadius.circular(999),
-        border: Border.all(color: Colors.black.withOpacity(0.06)),
+        border: Border.all(color: Colors.black.withValues(alpha: 0.06)),
       ),
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Icon(icon, size: 16, color: Colors.black.withOpacity(0.78)),
+          Icon(icon, size: 16, color: Colors.black.withValues(alpha: 0.78)),
           const SizedBox(width: 6),
           Text(
             label,
             style: TextStyle(
               fontSize: 12.5,
               fontWeight: FontWeight.w600,
-              color: Colors.black.withOpacity(0.78),
+              color: Colors.black.withValues(alpha: 0.78),
             ),
           ),
         ],

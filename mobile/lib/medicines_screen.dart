@@ -1,8 +1,14 @@
 import 'package:flutter/material.dart';
 import 'dart:async';
+import 'package:elderlink/karachi_time.dart';
 import 'account_settings_screen.dart';
 import 'services/api_service.dart';
 import 'widgets/avatar_widget.dart';
+
+bool _mongoObjectId(String s) {
+  final t = s.trim();
+  return t.length == 24 && RegExp(r'^[a-fA-F0-9]{24}$').hasMatch(t);
+}
 
 class MedicinesScreen extends StatefulWidget {
   final String? staffName;
@@ -23,14 +29,27 @@ class MedicinesScreen extends StatefulWidget {
 class _MedicinesScreenState extends State<MedicinesScreen> {
   List<Medicine> _medicines = [];
   List<Elder> _elders = [];
-  String? _selectedElder;
+  /// Mongo [Elder] id for the filter dropdown (never a Reading document id).
+  String? _selectedElderId;
   bool _isLoading = true;
   String? _error;
   Timer? _refreshTimer;
 
+  void _syncFilterSelectionAfterEldersLoad() {
+    if (_elders.isEmpty) {
+      _selectedElderId = null;
+      return;
+    }
+    if (_selectedElderId == null ||
+        !_elders.any((e) => e.id == _selectedElderId)) {
+      _selectedElderId = _elders.first.id;
+    }
+  }
+
   @override
   void initState() {
     super.initState();
+    ensureKarachiTimeZones();
     _loadData();
     // Elders list was only loaded once; watch sync updates /api/elders without remounting IndexedStack.
     _refreshTimer = Timer.periodic(const Duration(seconds: 10), (_) {
@@ -53,10 +72,8 @@ class _MedicinesScreenState extends State<MedicinesScreen> {
   }
 
   Future<void> _loadData() async {
-    await Future.wait([
-      _loadElders(),
-      _loadMedicines(),
-    ]);
+    await _loadElders();
+    await _loadMedicines();
   }
 
   Future<void> _loadElders() async {
@@ -82,21 +99,32 @@ class _MedicinesScreenState extends State<MedicinesScreen> {
       }
 
       for (final reading in readings) {
-        final rawPerson = reading.personName?.trim();
-        final rawUser = reading.username.trim();
-        // Prefer saved display name; fall back to username (do not hide "Watch User" if that is all we have).
-        final displayName =
-            (rawPerson != null && rawPerson.isNotEmpty) ? rawPerson : rawUser;
-        if (displayName.isEmpty) continue;
+        // Match elders_screen: never surface legacy "Watch User" / anonymous-only rows as a fake elder.
+        final display = reading.personName?.trim();
+        final stableKey = (display != null && display.isNotEmpty)
+            ? display
+            : reading.username.trim();
+        if (stableKey.isEmpty || stableKey == 'Watch User') continue;
 
-        final key = normKey(displayName);
+        final linkedElderId = reading.elderId?.trim();
+        if (linkedElderId == null ||
+            linkedElderId.isEmpty ||
+            !_mongoObjectId(linkedElderId)) {
+          continue;
+        }
+
+        final displayName = (display != null && display.isNotEmpty)
+            ? display
+            : 'Unnamed watch user';
+
+        final key = normKey(stableKey);
         if (elderKeys.contains(key)) continue;
         elderKeys.add(key);
 
         final exists = manualElders.any((e) => normKey(e.name) == key);
         if (!exists) {
           allElders.add(Elder(
-            id: reading.id,
+            id: linkedElderId,
             name: displayName,
             roomNumber: reading.roomNumber ?? '',
             age: reading.age ?? '',
@@ -105,6 +133,7 @@ class _MedicinesScreenState extends State<MedicinesScreen> {
                 ? 'need_attention'
                 : 'stable',
             gender: reading.gender ?? 'Male',
+            readingUsername: null,
             createdAt: reading.timestamp,
             updatedAt: reading.timestamp,
           ));
@@ -122,6 +151,7 @@ class _MedicinesScreenState extends State<MedicinesScreen> {
       if (mounted) {
         setState(() {
           _elders = allElders;
+          _syncFilterSelectionAfterEldersLoad();
         });
       }
     } catch (e, stackTrace) {
@@ -133,6 +163,7 @@ class _MedicinesScreenState extends State<MedicinesScreen> {
         if (mounted) {
           setState(() {
             _elders = manualElders;
+            _syncFilterSelectionAfterEldersLoad();
             print('Loaded ${manualElders.length} manual elders after error');
           });
         }
@@ -149,8 +180,48 @@ class _MedicinesScreenState extends State<MedicinesScreen> {
 
   Future<void> _loadMedicines() async {
     try {
+      if (_elders.isEmpty || _selectedElderId == null) {
+        if (mounted) {
+          setState(() {
+            _medicines = [];
+            _isLoading = false;
+            _error = null;
+          });
+        }
+        return;
+      }
+
+      Elder? selected;
+      for (final e in _elders) {
+        if (e.id == _selectedElderId) {
+          selected = e;
+          break;
+        }
+      }
+      if (selected == null) {
+        if (mounted) {
+          setState(() {
+            _medicines = [];
+            _isLoading = false;
+            _error = null;
+          });
+        }
+        return;
+      }
+
+      if (!_mongoObjectId(selected.id)) {
+        if (mounted) {
+          setState(() {
+            _medicines = [];
+            _isLoading = false;
+            _error = 'Medicines require a server elder id for this resident';
+          });
+        }
+        return;
+      }
+
       final medicines = await ApiService.getMedicines(
-        elderName: _selectedElder,
+        elderId: selected.id.trim(),
         date: DateTime.now(),
       );
       if (mounted) {
@@ -181,167 +252,13 @@ class _MedicinesScreenState extends State<MedicinesScreen> {
       return;
     }
 
-    final medicineNameController = TextEditingController();
-    final dosageController = TextEditingController();
-    final timeController = TextEditingController();
-    String? selectedElder;
-    String selectedElderRoom = '';
-    bool isLoading = false;
-
-    showDialog(
+    final messenger = ScaffoldMessenger.of(context);
+    showDialog<void>(
       context: context,
-      builder: (context) => StatefulBuilder(
-        builder: (context, setDialogState) => AlertDialog(
-          title: const Text(
-            'Add Medicine',
-            style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
-          ),
-          content: SingleChildScrollView(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const Text(
-                  'Select Elder *',
-                  style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
-                ),
-                const SizedBox(height: 8),
-                DropdownButtonFormField<String>(
-                  value: selectedElder,
-                  decoration: const InputDecoration(
-                    border: OutlineInputBorder(),
-                    contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                  ),
-                  items: _elders.map((elder) {
-                    return DropdownMenuItem(
-                      value: elder.name,
-                      child: Text('${elder.name}${elder.roomNumber != null ? ' (Room ${elder.roomNumber})' : ''}'),
-                    );
-                  }).toList(),
-                  onChanged: (value) {
-                    setDialogState(() {
-                      selectedElder = value;
-                      final elder = _elders.firstWhere((e) => e.name == value);
-                      selectedElderRoom = elder.roomNumber ?? '';
-                    });
-                  },
-                ),
-                const SizedBox(height: 16),
-                TextField(
-                  controller: medicineNameController,
-                  decoration: const InputDecoration(
-                    labelText: 'Medicine Name *',
-                    border: OutlineInputBorder(),
-                  ),
-                ),
-                const SizedBox(height: 12),
-                TextField(
-                  controller: dosageController,
-                  decoration: const InputDecoration(
-                    labelText: 'Dosage (e.g., 500mg) *',
-                    border: OutlineInputBorder(),
-                  ),
-                ),
-                const SizedBox(height: 12),
-                TextField(
-                  controller: timeController,
-                  decoration: const InputDecoration(
-                    labelText: 'Time (e.g., 09:00) *',
-                    border: OutlineInputBorder(),
-                    hintText: 'HH:MM format',
-                  ),
-                ),
-              ],
-            ),
-          ),
-          actions: [
-            TextButton(
-              onPressed: isLoading ? null : () => Navigator.of(context).pop(),
-              child: const Text('Cancel'),
-            ),
-            ElevatedButton(
-              onPressed: isLoading ? null : () async {
-                if (selectedElder == null ||
-                    medicineNameController.text.trim().isEmpty ||
-                    dosageController.text.trim().isEmpty ||
-                    timeController.text.trim().isEmpty) {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(
-                      content: Text('Please fill all required fields'),
-                      backgroundColor: Colors.red,
-                    ),
-                  );
-                  return;
-                }
-
-                // Validate time format
-                final timeRegex = RegExp(r'^([0-1]?[0-9]|2[0-3]):[0-5][0-9]$');
-                if (!timeRegex.hasMatch(timeController.text.trim())) {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(
-                      content: Text('Please enter time in HH:MM format (e.g., 09:00)'),
-                      backgroundColor: Colors.red,
-                    ),
-                  );
-                  return;
-                }
-
-                setDialogState(() {
-                  isLoading = true;
-                });
-
-                try {
-                  final scheduledDate = DateTime.now();
-                  await ApiService.addMedicine(
-                    elderName: selectedElder!,
-                    elderRoomNumber: selectedElderRoom.isNotEmpty ? selectedElderRoom : null,
-                    medicineName: medicineNameController.text.trim(),
-                    dosage: dosageController.text.trim(),
-                    time: timeController.text.trim(),
-                    scheduledDate: scheduledDate,
-                  );
-
-                  if (context.mounted) {
-                    Navigator.of(context).pop();
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(
-                        content: Text('Medicine added successfully! Watch user will be notified.'),
-                        backgroundColor: Colors.green,
-                      ),
-                    );
-                    _loadMedicines();
-                  }
-                } catch (e) {
-                  if (context.mounted) {
-                    setDialogState(() {
-                      isLoading = false;
-                    });
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      SnackBar(
-                        content: Text('Error: $e'),
-                        backgroundColor: Colors.red,
-                      ),
-                    );
-                  }
-                }
-              },
-              style: ElevatedButton.styleFrom(
-                backgroundColor: const Color(0xFF17A2A2),
-                foregroundColor: Colors.white,
-              ),
-              child: isLoading
-                  ? const SizedBox(
-                      width: 20,
-                      height: 20,
-                      child: CircularProgressIndicator(
-                        strokeWidth: 2,
-                        valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
-                      ),
-                    )
-                  : const Text('Add Medicine'),
-            ),
-          ],
-        ),
+      builder: (dialogContext) => _AddMedicineDialog(
+        elders: _elders,
+        messenger: messenger,
+        onSuccess: _loadMedicines,
       ),
     );
   }
@@ -354,7 +271,7 @@ class _MedicinesScreenState extends State<MedicinesScreen> {
       backgroundColor: const Color(0xFFF6FFFA),
       appBar: AppBar(
         title: const Text(
-          'ElderLinks',
+          'ElderLink',
           style: TextStyle(
             fontSize: 22,
             fontWeight: FontWeight.w800,
@@ -400,7 +317,9 @@ class _MedicinesScreenState extends State<MedicinesScreen> {
                 ],
               ),
               child: DropdownButtonFormField<String>(
-                value: _selectedElder,
+                value: _elders.any((e) => e.id == _selectedElderId)
+                    ? _selectedElderId
+                    : null,
                 decoration: InputDecoration(
                   labelText: _elders.isEmpty ? 'No Elders Found' : 'Filter by Elder',
                   prefixIcon: const Icon(Icons.person),
@@ -411,15 +330,11 @@ class _MedicinesScreenState extends State<MedicinesScreen> {
                   filled: true,
                   fillColor: Colors.white,
                   contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-                  helperText: _elders.isEmpty 
+                  helperText: _elders.isEmpty
                       ? 'Send data from watch app first to see elders'
-                      : null,
+                      : 'Medicines are scoped by elder id',
                 ),
                 items: [
-                  const DropdownMenuItem<String>(
-                    value: null,
-                    child: Text('All Elders'),
-                  ),
                   if (_elders.isEmpty)
                     const DropdownMenuItem<String>(
                       value: 'no_elders',
@@ -429,15 +344,17 @@ class _MedicinesScreenState extends State<MedicinesScreen> {
                   else
                     ..._elders.map((elder) {
                       return DropdownMenuItem<String>(
-                        value: elder.name,
-                        child: Text('${elder.name}${elder.roomNumber != null && elder.roomNumber!.isNotEmpty ? ' (Room ${elder.roomNumber})' : ''}'),
+                        value: elder.id,
+                        child: Text(
+                          '${elder.name}${elder.roomNumber.trim().isNotEmpty ? ' (Room ${elder.roomNumber})' : ''}',
+                        ),
                       );
                     }),
                 ],
                 onChanged: _elders.isEmpty ? null : (value) {
-                  if (value == 'no_elders') return;
+                  if (value == null || value == 'no_elders') return;
                   setState(() {
-                    _selectedElder = value;
+                    _selectedElderId = value;
                   });
                   _loadMedicines();
                 },
@@ -680,7 +597,7 @@ class _MedicinesScreenState extends State<MedicinesScreen> {
             if (medicine.takenAt != null) ...[
               const SizedBox(height: 8),
               Text(
-                'Taken at: ${_formatTime(medicine.takenAt!)}',
+                'Taken at: ${_formatTakenAtDisplay(medicine.takenAt!)}',
                 style: TextStyle(
                   fontSize: 12,
                   color: Colors.black.withOpacity(0.5),
@@ -717,11 +634,316 @@ class _MedicinesScreenState extends State<MedicinesScreen> {
     );
   }
 
-  String _formatTime(DateTime dateTime) {
-    final hour = dateTime.hour;
-    final minute = dateTime.minute.toString().padLeft(2, '0');
+  /// Backend stores [instant] in UTC; show Asia/Karachi wall time (same as watch/music).
+  String _formatTakenAtDisplay(DateTime instant) {
+    final wall = utcInstantToKarachiWall(instant);
+    final hour = wall.hour;
+    final minute = wall.minute.toString().padLeft(2, '0');
     final period = hour >= 12 ? 'PM' : 'AM';
     final displayHour = hour > 12 ? hour - 12 : (hour == 0 ? 12 : hour);
     return '${displayHour.toString().padLeft(2, '0')}:$minute $period';
   }
+}
+
+/// Controllers are disposed in [State.dispose] after the route unmounts — not in
+/// [showDialog]'s future completion, which runs before dependents detach (framework assert).
+class _AddMedicineDialog extends StatefulWidget {
+  final List<Elder> elders;
+  final ScaffoldMessengerState messenger;
+  final Future<void> Function() onSuccess;
+
+  const _AddMedicineDialog({
+    required this.elders,
+    required this.messenger,
+    required this.onSuccess,
+  });
+
+  @override
+  State<_AddMedicineDialog> createState() => _AddMedicineDialogState();
+}
+
+class _AddMedicineDialogState extends State<_AddMedicineDialog> {
+  static final _timeRegex = RegExp(r'^([0-1]?[0-9]|2[0-3]):[0-5][0-9]$');
+
+  final List<_MedRowControllers> _rows = [_MedRowControllers()];
+  final List<_MedRowControllers> _removedRows = [];
+  String? _selectedElderId;
+  String _selectedElderRoom = '';
+  bool _isLoading = false;
+
+  @override
+  void initState() {
+    super.initState();
+    if (widget.elders.isNotEmpty) {
+      final e = widget.elders.first;
+      _selectedElderId = e.id;
+      _selectedElderRoom = e.roomNumber;
+    }
+  }
+
+  @override
+  void dispose() {
+    for (final r in _rows) {
+      r.dispose();
+    }
+    for (final r in _removedRows) {
+      r.dispose();
+    }
+    super.dispose();
+  }
+
+  void _snack(String msg, Color bg) {
+    widget.messenger.showSnackBar(
+      SnackBar(content: Text(msg), backgroundColor: bg),
+    );
+  }
+
+  Future<void> _submit() async {
+    if (_selectedElderId == null) {
+      _snack('Please select an elder', Colors.red);
+      return;
+    }
+
+    final toAdd = _rows.where((r) => !r.isBlank).toList();
+    if (toAdd.isEmpty) {
+      _snack('Add at least one medicine (name, dosage, time)', Colors.red);
+      return;
+    }
+
+    for (final r in toAdd) {
+      final n = r.name.text.trim();
+      final d = r.dosage.text.trim();
+      final t = r.time.text.trim();
+      if (n.isEmpty || d.isEmpty || t.isEmpty) {
+        _snack(
+          'Each medicine needs name, dosage, and time (or clear unused rows)',
+          Colors.red,
+        );
+        return;
+      }
+      if (!_timeRegex.hasMatch(t)) {
+        _snack('Invalid time for "$n" — use HH:MM (e.g. 09:00)', Colors.red);
+        return;
+      }
+    }
+
+    setState(() => _isLoading = true);
+
+    try {
+      Elder elder;
+      try {
+        elder = widget.elders.firstWhere((e) => e.id == _selectedElderId);
+      } catch (_) {
+        if (!mounted) return;
+        setState(() => _isLoading = false);
+        _snack('Selected elder not found; close and try again', Colors.red);
+        return;
+      }
+      if (!_mongoObjectId(elder.id)) {
+        if (!mounted) return;
+        setState(() => _isLoading = false);
+        _snack('This elder has no valid server id; cannot add medicine', Colors.red);
+        return;
+      }
+      final scheduledDate = DateTime.now();
+      for (final r in toAdd) {
+        await ApiService.addMedicine(
+          elderId: elder.id.trim(),
+          elderRoomNumber:
+              _selectedElderRoom.isNotEmpty ? _selectedElderRoom : null,
+          medicineName: r.name.text.trim(),
+          dosage: r.dosage.text.trim(),
+          time: r.time.text.trim(),
+          scheduledDate: scheduledDate,
+        );
+      }
+
+      if (!mounted) return;
+      Navigator.of(context).pop();
+      final msg = toAdd.length == 1
+          ? 'Medicine added successfully! Watch user will be notified.'
+          : '${toAdd.length} medicines added successfully! Watch user will be notified.';
+      widget.messenger.showSnackBar(
+        SnackBar(content: Text(msg), backgroundColor: Colors.green),
+      );
+      await widget.onSuccess();
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _isLoading = false);
+      _snack('Error: $e', Colors.red);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text(
+        'Add Medicine',
+        style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+      ),
+      content: SingleChildScrollView(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              'Select Elder *',
+              style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
+            ),
+            const SizedBox(height: 8),
+            DropdownButtonFormField<String>(
+              value: widget.elders.any((e) => e.id == _selectedElderId)
+                  ? _selectedElderId
+                  : null,
+              decoration: const InputDecoration(
+                border: OutlineInputBorder(),
+                contentPadding:
+                    EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+              ),
+              items: widget.elders.map((elder) {
+                final room = elder.roomNumber.trim();
+                return DropdownMenuItem(
+                  value: elder.id,
+                  child: Text(
+                    room.isNotEmpty
+                        ? '${elder.name} (Room $room)'
+                        : elder.name,
+                  ),
+                );
+              }).toList(),
+              onChanged: _isLoading
+                  ? null
+                  : (value) {
+                      if (value == null) return;
+                      setState(() {
+                        _selectedElderId = value;
+                        final elder = widget.elders.firstWhere(
+                          (e) => e.id == value,
+                        );
+                        _selectedElderRoom = elder.roomNumber;
+                      });
+                    },
+            ),
+            const SizedBox(height: 16),
+            ..._rows.asMap().entries.expand((entry) {
+              final i = entry.key;
+              final row = entry.value;
+              return [
+                if (_rows.length > 1) ...[
+                  Row(
+                    children: [
+                      Text(
+                        'Medicine ${i + 1}',
+                        style: const TextStyle(fontWeight: FontWeight.w600),
+                      ),
+                      const Spacer(),
+                      IconButton(
+                        icon: const Icon(Icons.close, size: 20),
+                        tooltip: 'Remove',
+                        onPressed: _isLoading
+                            ? null
+                            : () {
+                                if (_rows.length <= 1) return;
+                                setState(() {
+                                  _removedRows.add(_rows.removeAt(i));
+                                });
+                              },
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                ],
+                TextField(
+                  controller: row.name,
+                  enabled: !_isLoading,
+                  decoration: const InputDecoration(
+                    labelText: 'Medicine Name *',
+                    border: OutlineInputBorder(),
+                  ),
+                ),
+                const SizedBox(height: 12),
+                TextField(
+                  controller: row.dosage,
+                  enabled: !_isLoading,
+                  decoration: const InputDecoration(
+                    labelText: 'Dosage (e.g., 500mg) *',
+                    border: OutlineInputBorder(),
+                  ),
+                ),
+                const SizedBox(height: 12),
+                TextField(
+                  controller: row.time,
+                  enabled: !_isLoading,
+                  decoration: const InputDecoration(
+                    labelText: 'Time (e.g., 09:00) *',
+                    border: OutlineInputBorder(),
+                    hintText: 'HH:MM format',
+                  ),
+                ),
+                const SizedBox(height: 16),
+              ];
+            }),
+            Align(
+              alignment: Alignment.centerLeft,
+              child: TextButton.icon(
+                onPressed: _isLoading
+                    ? null
+                    : () {
+                        setState(() => _rows.add(_MedRowControllers()));
+                      },
+                icon: const Icon(Icons.add),
+                label: const Text('Add another medicine'),
+              ),
+            ),
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: _isLoading ? null : () => Navigator.of(context).pop(),
+          child: const Text('Cancel'),
+        ),
+        ElevatedButton(
+          onPressed: _isLoading ? null : _submit,
+          style: ElevatedButton.styleFrom(
+            backgroundColor: const Color(0xFF17A2A2),
+            foregroundColor: Colors.white,
+          ),
+          child: _isLoading
+              ? const SizedBox(
+                  width: 20,
+                  height: 20,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2,
+                    valueColor:
+                        AlwaysStoppedAnimation<Color>(Colors.white),
+                  ),
+                )
+              : const Text('Add Medicine'),
+        ),
+      ],
+    );
+  }
+}
+
+class _MedRowControllers {
+  _MedRowControllers()
+      : name = TextEditingController(),
+        dosage = TextEditingController(),
+        time = TextEditingController();
+
+  final TextEditingController name;
+  final TextEditingController dosage;
+  final TextEditingController time;
+
+  void dispose() {
+    name.dispose();
+    dosage.dispose();
+    time.dispose();
+  }
+
+  bool get isBlank =>
+      name.text.trim().isEmpty &&
+      dosage.text.trim().isEmpty &&
+      time.text.trim().isEmpty;
 }

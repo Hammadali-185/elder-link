@@ -1,18 +1,19 @@
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
-import 'package:shared_preferences/shared_preferences.dart';
-import '../services/staff_users_storage.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-class EditProfileScreen extends StatefulWidget {
+import '../auth/auth_error_mapper.dart';
+import '../auth/providers/auth_providers.dart';
+
+class EditProfileScreen extends ConsumerStatefulWidget {
   const EditProfileScreen({super.key});
 
   @override
-  State<EditProfileScreen> createState() => _EditProfileScreenState();
+  ConsumerState<EditProfileScreen> createState() => _EditProfileScreenState();
 }
 
-class _EditProfileScreenState extends State<EditProfileScreen> {
+class _EditProfileScreenState extends ConsumerState<EditProfileScreen> {
   final _nameController = TextEditingController();
-  final _usernameController = TextEditingController();
-  final _emailController = TextEditingController();
   final _phoneController = TextEditingController();
   bool _isLoading = false;
 
@@ -23,74 +24,36 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
   }
 
   Future<void> _loadProfileData() async {
-    final prefs = await SharedPreferences.getInstance();
-    final user = await StaffUsersStorage.resolveCurrentUser(prefs);
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null || !mounted) return;
+    final repo = ref.read(staffProfileRepositoryProvider);
+    final doc = await repo.fetchProfile(user.uid);
     if (!mounted) return;
+    final fromDoc = doc?.displayName.trim() ?? '';
     setState(() {
-      if (user != null) {
-        _nameController.text = user.name;
-        _usernameController.text = user.username;
-      }
-      _emailController.text = prefs.getString('staff_email') ?? '';
-      _phoneController.text = prefs.getString('staff_phone') ?? '';
+      _nameController.text =
+          fromDoc.isNotEmpty ? fromDoc : (user.displayName ?? '');
+      _phoneController.text = doc?.phone?.trim() ?? '';
     });
   }
 
   Future<void> _saveProfile() async {
-    if (_nameController.text.trim().isEmpty || _usernameController.text.trim().isEmpty) {
+    if (_nameController.text.trim().isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-          content: Text('Name and Username are required'),
+          content: Text('Name is required'),
           backgroundColor: Colors.red,
         ),
       );
       return;
     }
 
-    setState(() {
-      _isLoading = true;
-    });
+    setState(() => _isLoading = true);
 
     try {
-      final prefs = await SharedPreferences.getInstance();
-      final current = await StaffUsersStorage.resolveCurrentUser(prefs);
-      final oldUsername = current?.username.trim() ?? '';
-      if (oldUsername.isEmpty) {
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text('Not signed in'),
-              backgroundColor: Colors.red,
-            ),
-          );
-        }
-        return;
-      }
-
-      final err = await StaffUsersStorage.updateUserProfile(
-        prefs,
-        oldUsername: oldUsername,
-        newName: _nameController.text.trim(),
-        newUsername: _usernameController.text.trim(),
-      );
-      if (err != null) {
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text(err),
-              backgroundColor: Colors.red,
-            ),
-          );
-        }
-        return;
-      }
-
-      if (_emailController.text.trim().isNotEmpty) {
-        await prefs.setString('staff_email', _emailController.text.trim());
-      }
-      if (_phoneController.text.trim().isNotEmpty) {
-        await prefs.setString('staff_phone', _phoneController.text.trim());
-      }
+      final repo = ref.read(staffProfileRepositoryProvider);
+      await repo.updateDisplayName(_nameController.text.trim());
+      await repo.updatePhone(_phoneController.text.trim());
 
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -99,31 +62,25 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
             backgroundColor: Color(0xFF17A2A2),
           ),
         );
-        Navigator.of(context).pop(true); // Return true to indicate update
+        Navigator.of(context).pop(true);
       }
     } catch (e) {
       if (mounted) {
+        final msg = e is FirebaseAuthException
+            ? mapFirebaseAuthError(e)
+            : e.toString();
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Error: $e'),
-            backgroundColor: Colors.red,
-          ),
+          SnackBar(content: Text(msg), backgroundColor: Colors.red),
         );
       }
     } finally {
-      if (mounted) {
-        setState(() {
-          _isLoading = false;
-        });
-      }
+      if (mounted) setState(() => _isLoading = false);
     }
   }
 
   @override
   void dispose() {
     _nameController.dispose();
-    _usernameController.dispose();
-    _emailController.dispose();
     _phoneController.dispose();
     super.dispose();
   }
@@ -131,6 +88,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
   @override
   Widget build(BuildContext context) {
     const deepMint = Color(0xFF17A2A2);
+    final email = FirebaseAuth.instance.currentUser?.email ?? '';
 
     return Scaffold(
       backgroundColor: const Color(0xFFF6FFFA),
@@ -157,28 +115,21 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
           children: [
             _buildTextField(
               controller: _nameController,
-              label: 'Name',
+              label: 'Display name',
               icon: Icons.person_outline,
               required: true,
             ),
             const SizedBox(height: 16),
-            _buildTextField(
-              controller: _usernameController,
-              label: 'Username',
-              icon: Icons.alternate_email,
-              required: true,
-            ),
-            const SizedBox(height: 16),
-            _buildTextField(
-              controller: _emailController,
+            _buildReadOnlyField(
               label: 'Email',
+              value: email.isEmpty ? '—' : email,
               icon: Icons.email_outlined,
-              keyboardType: TextInputType.emailAddress,
+              hint: 'Managed by your sign-in provider',
             ),
             const SizedBox(height: 16),
             _buildTextField(
               controller: _phoneController,
-              label: 'Phone Number',
+              label: 'Phone number',
               icon: Icons.phone_outlined,
               keyboardType: TextInputType.phone,
             ),
@@ -205,7 +156,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                         ),
                       )
                     : const Text(
-                        'Save Changes',
+                        'Save changes',
                         style: TextStyle(
                           fontSize: 16,
                           fontWeight: FontWeight.w700,
@@ -215,6 +166,66 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
             ),
           ],
         ),
+      ),
+    );
+  }
+
+  Widget _buildReadOnlyField({
+    required String label,
+    required String value,
+    required IconData icon,
+    String? hint,
+  }) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: Colors.black.withValues(alpha: 0.06)),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.06),
+            blurRadius: 20,
+            offset: const Offset(0, 6),
+          ),
+        ],
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(icon, color: Colors.black.withValues(alpha: 0.6)),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  label,
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: Colors.black.withValues(alpha: 0.5),
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  value,
+                  style: const TextStyle(fontSize: 16, color: Colors.black87),
+                ),
+                if (hint != null) ...[
+                  const SizedBox(height: 4),
+                  Text(
+                    hint,
+                    style: TextStyle(
+                      fontSize: 12,
+                      color: Colors.black.withValues(alpha: 0.45),
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -230,10 +241,10 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: Colors.white.withOpacity(0.8)),
+        border: Border.all(color: Colors.white.withValues(alpha: 0.8)),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withOpacity(0.06),
+            color: Colors.black.withValues(alpha: 0.06),
             blurRadius: 20,
             offset: const Offset(0, 6),
           ),
@@ -244,13 +255,13 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
         keyboardType: keyboardType,
         decoration: InputDecoration(
           labelText: required ? '$label *' : label,
-          prefixIcon: Icon(icon, color: Colors.black.withOpacity(0.6)),
+          prefixIcon: Icon(icon, color: Colors.black.withValues(alpha: 0.6)),
           border: InputBorder.none,
           enabledBorder: InputBorder.none,
           focusedBorder: InputBorder.none,
           contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
           labelStyle: TextStyle(
-            color: Colors.black.withOpacity(0.6),
+            color: Colors.black.withValues(alpha: 0.6),
             fontSize: 14,
           ),
         ),

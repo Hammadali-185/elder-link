@@ -1,8 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'dart:async';
+import 'package:elderlink/karachi_time.dart';
 import 'account_settings_screen.dart';
 import 'services/api_service.dart';
+import 'services/alerts_resolved_prefs.dart';
+import 'services/staff_reading_filter.dart';
 import 'widgets/avatar_widget.dart';
 
 class AlertsScreen extends StatefulWidget {
@@ -22,11 +25,10 @@ class _AlertsScreenState extends State<AlertsScreen> {
   String _filterSegment = 'active'; // 'active' | 'resolved' | 'last7'
   Set<String> _resolvedAlertKeys = {};
 
-  static const String _resolvedPrefKey = 'alerts_resolved_keys';
-
   @override
   void initState() {
     super.initState();
+    ensureKarachiTimeZones();
     _loadReadings();
     _loadResolvedKeys();
     _refreshTimer = Timer.periodic(const Duration(seconds: 10), (_) {
@@ -37,7 +39,7 @@ class _AlertsScreenState extends State<AlertsScreen> {
   Future<void> _loadResolvedKeys() async {
     try {
       final prefs = await SharedPreferences.getInstance();
-      final list = prefs.getStringList(_resolvedPrefKey);
+      final list = prefs.getStringList(AlertsResolvedPrefs.resolvedKeysPrefKey);
       if (list != null && mounted) {
         setState(() => _resolvedAlertKeys = list.toSet());
       }
@@ -47,20 +49,22 @@ class _AlertsScreenState extends State<AlertsScreen> {
   Future<void> _saveResolvedKeys() async {
     try {
       final prefs = await SharedPreferences.getInstance();
-      await prefs.setStringList(_resolvedPrefKey, _resolvedAlertKeys.toList());
+      await prefs.setStringList(
+          AlertsResolvedPrefs.resolvedKeysPrefKey, _resolvedAlertKeys.toList());
+      AlertsResolvedPrefs.markResolvedKeysChanged();
     } catch (_) {}
   }
 
-  String _alertKey(Reading r) => '${r.id}_${r.timestamp.millisecondsSinceEpoch}';
-
-  bool _isResolved(Reading r) => _resolvedAlertKeys.contains(_alertKey(r));
+  bool _isResolved(Reading r) =>
+      _resolvedAlertKeys.contains(AlertsResolvedPrefs.readingKey(r));
 
   void _markResolved(Reading r, bool resolved) {
+    final key = AlertsResolvedPrefs.readingKey(r);
     setState(() {
       if (resolved) {
-        _resolvedAlertKeys.add(_alertKey(r));
+        _resolvedAlertKeys.add(key);
       } else {
-        _resolvedAlertKeys.remove(_alertKey(r));
+        _resolvedAlertKeys.remove(key);
       }
     });
     _saveResolvedKeys();
@@ -92,36 +96,45 @@ class _AlertsScreenState extends State<AlertsScreen> {
     }
   }
 
-  String _formatTime(DateTime dateTime) {
-    final hour = dateTime.hour;
-    final minute = dateTime.minute;
+  /// Wall-clock time in **Asia/Karachi** (matches watch / medicines day logic).
+  String _formatTime(DateTime instant) {
+    final k = utcInstantToKarachiWall(instant);
+    final hour = k.hour;
+    final minute = k.minute;
     final period = hour >= 12 ? 'PM' : 'AM';
     final displayHour = hour > 12 ? hour - 12 : (hour == 0 ? 12 : hour);
     return '${displayHour.toString().padLeft(2, '0')}:${minute.toString().padLeft(2, '0')} $period';
   }
 
-  String _formatDate(DateTime dateTime) {
-    final now = DateTime.now();
-    final today = DateTime(now.year, now.month, now.day);
-    final readingDate = DateTime(dateTime.year, dateTime.month, dateTime.day);
+  static DateTime _dateOnly(DateTime d) => DateTime(d.year, d.month, d.day);
 
-    if (readingDate.isAtSameMomentAs(today)) {
+  String _formatDate(DateTime instant) {
+    final k = utcInstantToKarachiWall(instant);
+    final nowK = nowKarachiWallClock();
+    final readingDay = _dateOnly(k);
+    final todayK = _dateOnly(nowK);
+    final yesterdayK = todayK.subtract(const Duration(days: 1));
+
+    if (readingDay == todayK) {
       return 'Today';
-    } else if (readingDate.isAtSameMomentAs(today.subtract(const Duration(days: 1)))) {
-      return 'Yesterday';
-    } else {
-      return '${dateTime.day}/${dateTime.month}/${dateTime.year}';
     }
+    if (readingDay == yesterdayK) {
+      return 'Yesterday';
+    }
+    return '${k.day}/${k.month}/${k.year}';
   }
 
   @override
   Widget build(BuildContext context) {
     const deepMint = Color(0xFF17A2A2);
-    final now = DateTime.now();
-    final sevenDaysAgo = now.subtract(const Duration(days: 7));
+    final sevenDaysAgoUtc =
+        DateTime.now().toUtc().subtract(const Duration(days: 7));
 
-    // Base list: only alerts (emergencies and abnormal readings)
-    var alerts = _readings.where((r) => r.emergency || r.status == 'abnormal').toList();
+    // Base list: only alerts (emergencies and abnormal readings); drop Watch User placeholders.
+    var alerts = _readings
+        .where((r) => !isStaffWatchPlaceholder(r))
+        .where((r) => r.emergency || r.status == 'abnormal')
+        .toList();
     alerts.sort((a, b) => b.timestamp.compareTo(a.timestamp)); // Most recent first
 
     // Apply segment filter
@@ -130,14 +143,16 @@ class _AlertsScreenState extends State<AlertsScreen> {
     } else if (_filterSegment == 'resolved') {
       alerts = alerts.where((r) => _isResolved(r)).toList();
     } else if (_filterSegment == 'last7') {
-      alerts = alerts.where((r) => r.timestamp.isAfter(sevenDaysAgo)).toList();
+      alerts = alerts
+          .where((r) => r.timestamp.toUtc().isAfter(sevenDaysAgoUtc))
+          .toList();
     }
 
     return Scaffold(
       backgroundColor: const Color(0xFFF6FFFA),
       appBar: AppBar(
         title: const Text(
-          'ElderLinks',
+          'ElderLink',
           style: TextStyle(
             fontSize: 22,
             fontWeight: FontWeight.w800,

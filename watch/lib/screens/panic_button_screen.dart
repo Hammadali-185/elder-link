@@ -22,14 +22,7 @@ class _PanicButtonScreenState extends State<PanicButtonScreen> {
       _errorMessage = null;
     });
 
-    // Use saved name if available, otherwise use a default
-    final username = ApiService.userName?.isNotEmpty == true 
-        ? ApiService.userName! 
-        : 'Watch User';
-    
-    final result = await ApiService.sendPanicAlert(
-      username: username,
-    );
+    final result = await ApiService.sendPanicAlert();
 
     if (mounted) {
       setState(() {

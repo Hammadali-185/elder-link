@@ -4,6 +4,11 @@ import 'account_settings_screen.dart';
 import 'services/api_service.dart';
 import 'widgets/avatar_widget.dart';
 
+bool _mongoObjectId(String s) {
+  final t = s.trim();
+  return t.length == 24 && RegExp(r'^[a-fA-F0-9]{24}$').hasMatch(t);
+}
+
 class EldersScreen extends StatefulWidget {
   final String? staffName;
   
@@ -68,17 +73,25 @@ class _EldersScreenState extends State<EldersScreen> {
       
       // Add elders from watch readings (MongoDB Atlas)
       for (final reading in readings) {
-        final key = reading.personName ?? reading.username;
-        
-        // Skip if name is empty or default "Watch User"
-        if (key.isEmpty || key == 'Watch User') {
+        final display = reading.personName?.trim();
+        // Stable API username may be a per-device id; group by display name when set.
+        final stableKey = (display != null && display.isNotEmpty)
+            ? display
+            : reading.username.trim();
+        // Skip empty or legacy shared placeholder (replaced by per-device stable usernames on watch).
+        if (stableKey.isEmpty || stableKey == 'Watch User') {
           continue;
         }
-        
-        if (!elderMap.containsKey(key)) {
-          elderMap[key] = ElderProfile(
-            name: reading.personName ?? reading.username,
+
+        final displayName = (display != null && display.isNotEmpty)
+            ? display
+            : 'Unnamed watch user';
+
+        if (!elderMap.containsKey(stableKey)) {
+          elderMap[stableKey] = ElderProfile(
+            name: displayName,
             username: reading.username,
+            elderReadingUsername: null,
             gender: reading.gender,
             age: reading.age,
             disease: reading.disease,
@@ -89,10 +102,10 @@ class _EldersScreenState extends State<EldersScreen> {
             abnormalCount: 0,
             isManual: false,
           );
-          print('  Added watch user from MongoDB: $key (Room: ${reading.roomNumber ?? "N/A"})');
+          print('  Added watch user from MongoDB: $stableKey (Room: ${reading.roomNumber ?? "N/A"})');
         }
         
-        final elder = elderMap[key]!;
+        final elder = elderMap[stableKey]!;
         elder.totalReadings++;
         if (reading.emergency) elder.emergencyCount++;
         if (reading.status == 'abnormal') elder.abnormalCount++;
@@ -118,10 +131,18 @@ class _EldersScreenState extends State<EldersScreen> {
           if (manualElder.roomNumber != null && manualElder.roomNumber!.isNotEmpty) {
             existing.roomNumber = manualElder.roomNumber;
           }
+          if (manualElder.id.isNotEmpty) {
+            existing.deletableManualId = manualElder.id;
+          }
+          final ru = manualElder.readingUsername?.trim();
+          if (ru != null && ru.isNotEmpty) {
+            existing.elderReadingUsername = ru;
+          }
         } else {
           // Create new elder from manual entry
           final dummyReading = Reading(
             id: manualElder.id,
+            elderId: _mongoObjectId(manualElder.id) ? manualElder.id : null,
             username: manualElder.name.toLowerCase().replaceAll(' ', '_'),
             bp: 0,
             heartRate: 0,
@@ -137,6 +158,7 @@ class _EldersScreenState extends State<EldersScreen> {
           elderMap[key] = ElderProfile(
             name: manualElder.name,
             username: manualElder.name.toLowerCase().replaceAll(' ', '_'),
+            elderReadingUsername: manualElder.readingUsername,
             gender: manualElder.gender,
             age: manualElder.age,
             disease: manualElder.disease,
@@ -146,6 +168,7 @@ class _EldersScreenState extends State<EldersScreen> {
             emergencyCount: 0,
             abnormalCount: manualElder.status == 'need_attention' ? 1 : 0,
             isManual: true,
+            deletableManualId: manualElder.id.isNotEmpty ? manualElder.id : null,
           );
         }
       }
@@ -386,6 +409,124 @@ class _EldersScreenState extends State<EldersScreen> {
     );
   }
 
+  void _showElderDetailSheet(ElderProfile elder) {
+    const deepMint = Color(0xFF17A2A2);
+    final r = elder.latestReading;
+    final statusLabel = r.emergency
+        ? 'Emergency'
+        : (r.status == 'abnormal'
+            ? 'Abnormal'
+            : (r.status == 'need_attention' ? 'Need attention' : 'Stable'));
+
+    showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (ctx) {
+        final bottomInset = MediaQuery.of(ctx).viewPadding.bottom;
+        return SafeArea(
+          child: SingleChildScrollView(
+            padding: EdgeInsets.fromLTRB(20, 12, 20, 16 + bottomInset),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Center(
+                  child: Container(
+                    width: 40,
+                    height: 4,
+                    margin: const EdgeInsets.only(bottom: 16),
+                    decoration: BoxDecoration(
+                      color: Colors.black.withOpacity(0.12),
+                      borderRadius: BorderRadius.circular(999),
+                    ),
+                  ),
+                ),
+                Text(
+                  elder.name,
+                  style: const TextStyle(
+                    fontSize: 22,
+                    fontWeight: FontWeight.w800,
+                    color: Colors.black87,
+                  ),
+                ),
+                if (elder.roomNumber != null && elder.roomNumber!.isNotEmpty)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 6),
+                    child: Text(
+                      'Room ${elder.roomNumber}',
+                      style: TextStyle(color: Colors.black.withOpacity(0.65)),
+                    ),
+                  ),
+                if (elder.gender != null && elder.gender!.isNotEmpty) ...[
+                  const SizedBox(height: 4),
+                  Text(
+                    'Gender: ${elder.gender}',
+                    style: TextStyle(color: Colors.black.withOpacity(0.65)),
+                  ),
+                ],
+                if (elder.age != null && elder.age!.isNotEmpty) ...[
+                  const SizedBox(height: 4),
+                  Text(
+                    'Age: ${elder.age}',
+                    style: TextStyle(color: Colors.black.withOpacity(0.65)),
+                  ),
+                ],
+                if (elder.disease != null && elder.disease!.isNotEmpty) ...[
+                  const SizedBox(height: 8),
+                  Text(
+                    'Condition: ${elder.disease}',
+                    style: TextStyle(color: Colors.black.withOpacity(0.75)),
+                  ),
+                ],
+                const Divider(height: 28),
+                Text(
+                  'Latest status',
+                  style: TextStyle(fontWeight: FontWeight.w700, color: deepMint),
+                ),
+                const SizedBox(height: 6),
+                Text(
+                  statusLabel,
+                  style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  'Last reading: ${_formatTime(r.timestamp)}',
+                  style: TextStyle(fontSize: 13, color: Colors.black.withOpacity(0.55)),
+                ),
+                if (r.bp > 0 || r.heartRate > 0) ...[
+                  const SizedBox(height: 8),
+                  Text(
+                    [
+                      if (r.bp > 0) 'BP: ${r.bp}',
+                      if (r.heartRate > 0) 'HR: ${r.heartRate} BPM',
+                    ].join(' · '),
+                    style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w600),
+                  ),
+                ],
+                const Divider(height: 28),
+                Text(
+                  'Totals: ${elder.totalReadings} readings · ${elder.emergencyCount} emergencies · ${elder.abnormalCount} abnormal',
+                  style: TextStyle(fontSize: 13, color: Colors.black.withOpacity(0.6)),
+                ),
+                const SizedBox(height: 20),
+                SizedBox(
+                  width: double.infinity,
+                  child: OutlinedButton(
+                    onPressed: () => Navigator.of(ctx).pop(),
+                    child: const Text('Close'),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
   int get _totalElders => _elders.length;
   int get _stableElders => _elders.where((e) => e.emergencyCount == 0 && e.abnormalCount == 0).length;
   int get _needAttentionElders => _elders.where((e) => e.emergencyCount > 0 || e.abnormalCount > 0).length;
@@ -398,7 +539,7 @@ class _EldersScreenState extends State<EldersScreen> {
       backgroundColor: const Color(0xFFF6FFFA),
       appBar: AppBar(
         title: const Text(
-          'ElderLinks',
+          'ElderLink',
           style: TextStyle(
             fontSize: 22,
             fontWeight: FontWeight.w800,
@@ -679,9 +820,7 @@ class _EldersScreenState extends State<EldersScreen> {
                 ],
               ),
               child: InkWell(
-                onTap: () {
-                  // TODO: Navigate to elder detail screen
-                },
+                onTap: () => _showElderDetailSheet(elder),
                 borderRadius: const BorderRadius.only(
                   topRight: Radius.circular(16),
                   bottomRight: Radius.circular(16),
@@ -798,6 +937,18 @@ class _EldersScreenState extends State<EldersScreen> {
                       ),
                       child: const Icon(Icons.health_and_safety, color: Colors.orange, size: 20),
                     ),
+                  PopupMenuButton<String>(
+                    icon: Icon(Icons.more_vert, color: Colors.black.withOpacity(0.55), size: 22),
+                    onSelected: (value) {
+                      if (value == 'purge') _confirmPurgeElder(elder);
+                    },
+                    itemBuilder: (context) => const [
+                      PopupMenuItem(
+                        value: 'purge',
+                        child: Text('Delete elder & all data'),
+                      ),
+                    ],
+                  ),
                 ],
               ),
               if (elder.disease != null && elder.disease!.isNotEmpty) ...[
@@ -962,6 +1113,61 @@ class _EldersScreenState extends State<EldersScreen> {
     );
   }
 
+  Future<void> _confirmPurgeElder(ElderProfile elder) async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Delete elder & all data?'),
+        content: Text(
+          'This permanently removes "${elder.name}" from the system:\n\n'
+          '· Health readings\n'
+          '· Medicines & medicine history\n'
+          '· Music session records\n'
+          '· Heart alerts\n'
+          '· Elder profile\n\n'
+          'This cannot be undone.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Delete everything', style: TextStyle(color: Colors.red)),
+          ),
+        ],
+      ),
+    );
+    if (ok != true || !mounted) return;
+    try {
+      final result = await ApiService.purgeElderAllData(
+        elderName: elder.name,
+        elderMongoId: elder.deletableManualId,
+        readingUsername: elder.elderReadingUsername ?? elder.username,
+      );
+      if (!mounted) return;
+      final deleted = result['deleted'] as Map<String, dynamic>?;
+      final summary = deleted == null
+          ? 'Done.'
+          : 'Removed ${deleted['readings'] ?? 0} readings, ${deleted['medicines'] ?? 0} medicines, '
+              '${deleted['heartAlerts'] ?? 0} heart alerts, ${deleted['musicSessions'] ?? 0} music sessions, '
+              '${deleted['medicineEvents'] ?? 0} medicine events, ${deleted['elderRecords'] ?? 0} profile(s).';
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('${elder.name}: $summary')),
+      );
+      _loadElders();
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Could not delete: $e'),
+          backgroundColor: Colors.red,
+        ),
+      );
+    }
+  }
+
   String _formatTime(DateTime dateTime) {
     final now = DateTime.now();
     final difference = now.difference(dateTime);
@@ -983,6 +1189,8 @@ class _EldersScreenState extends State<EldersScreen> {
 class ElderProfile {
   String name;
   String username;
+  /// Server [Elder.readingUsername] when known (stable watch device id for purge).
+  String? elderReadingUsername;
   String? gender;
   String? age;
   String? disease;
@@ -992,10 +1200,13 @@ class ElderProfile {
   int emergencyCount;
   int abnormalCount;
   bool isManual;
+  /// MongoDB id for a staff-added elder row; used for DELETE /api/elders/:id.
+  String? deletableManualId;
 
   ElderProfile({
     required this.name,
     required this.username,
+    this.elderReadingUsername,
     this.gender,
     this.age,
     this.disease,
@@ -1005,5 +1216,6 @@ class ElderProfile {
     required this.emergencyCount,
     required this.abnormalCount,
     this.isManual = false,
+    this.deletableManualId,
   });
 }

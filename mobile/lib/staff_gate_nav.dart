@@ -1,20 +1,10 @@
 import 'package:flutter/material.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 
-import 'main.dart';
-import 'services/staff_users_storage.dart';
+import 'auth/staff_sign_out.dart';
 
-/// After logout: full app shell with account picker if any users exist, else signup only.
+/// Signs out Firebase staff session and returns to the app root route.
 Future<void> replaceRouteAfterStaffLogout(BuildContext context) async {
-  final prefs = await SharedPreferences.getInstance();
-  final users = await StaffUsersStorage.getUsers(prefs);
+  await signOutStaffEverywhere();
   if (!context.mounted) return;
-  Navigator.of(context).pushAndRemoveUntil(
-    MaterialPageRoute<void>(
-      builder: (_) => users.isEmpty
-          ? const MobileApp(openStaffSignup: true)
-          : const MobileApp(openStaffLogin: true),
-    ),
-    (route) => false,
-  );
+  Navigator.of(context, rootNavigator: true).popUntil((r) => r.isFirst);
 }

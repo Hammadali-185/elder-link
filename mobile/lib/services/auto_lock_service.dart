@@ -1,41 +1,53 @@
 import 'dart:async';
-import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 class AutoLockService {
   static Timer? _inactivityTimer;
   static DateTime? _lastActivityTime;
   static bool _isLocked = false;
-  static Function()? _onLockCallback;
+  static void Function()? _onLockCallback;
 
-  static Future<void> initialize(Function() onLock) async {
+  static Future<void> initialize(void Function() onLock) async {
     _onLockCallback = onLock;
-    await _checkAutoLock();
+    await _restartTimerIfNeeded();
   }
 
-  static Future<void> _checkAutoLock() async {
+  /// Starts or stops the periodic check from current prefs. Safe to call after settings change.
+  static Future<void> _restartTimerIfNeeded() async {
+    _inactivityTimer?.cancel();
+    _inactivityTimer = null;
+
     final prefs = await SharedPreferences.getInstance();
     final autoLockEnabled = prefs.getBool('security_autolock') ?? true;
-    final lockMinutes = prefs.getInt('security_autolock_minutes') ?? 5;
-
     if (!autoLockEnabled) {
-      _inactivityTimer?.cancel();
       return;
     }
 
-    // Check every minute if app should lock
-    _inactivityTimer?.cancel();
-    _inactivityTimer = Timer.periodic(const Duration(minutes: 1), (timer) async {
-      if (_lastActivityTime != null) {
-        final now = DateTime.now();
-        final inactiveDuration = now.difference(_lastActivityTime!);
-        final lockDuration = Duration(minutes: lockMinutes);
-
-        if (inactiveDuration >= lockDuration && !_isLocked) {
-          await lockApp();
-        }
-      }
+    // Frequent ticks so short timeouts (e.g. 1 min) and setting changes apply reliably.
+    _inactivityTimer = Timer.periodic(const Duration(seconds: 15), (_) {
+      _tick();
     });
+  }
+
+  static Future<void> _tick() async {
+    if (_isLocked) return;
+
+    final prefs = await SharedPreferences.getInstance();
+    final autoLockEnabled = prefs.getBool('security_autolock') ?? true;
+    if (!autoLockEnabled) {
+      _inactivityTimer?.cancel();
+      _inactivityTimer = null;
+      return;
+    }
+
+    final lockMinutes = prefs.getInt('security_autolock_minutes') ?? 5;
+    final last = _lastActivityTime;
+    if (last == null) return;
+
+    final inactive = DateTime.now().difference(last);
+    if (inactive >= Duration(minutes: lockMinutes)) {
+      await lockApp();
+    }
   }
 
   static void updateActivity() {
@@ -47,11 +59,11 @@ class AutoLockService {
     if (_isLocked) return;
 
     _isLocked = true;
+    _inactivityTimer?.cancel();
+    _inactivityTimer = null;
     print('🔒 App auto-locked due to inactivity');
     
-    if (_onLockCallback != null) {
-      _onLockCallback!();
-    }
+    _onLockCallback?.call();
   }
 
   static void unlockApp() {
@@ -62,10 +74,12 @@ class AutoLockService {
   static bool get isLocked => _isLocked;
 
   static Future<void> updateSettings() async {
-    await _checkAutoLock();
+    await _restartTimerIfNeeded();
   }
 
   static void dispose() {
     _inactivityTimer?.cancel();
+    _inactivityTimer = null;
+    _onLockCallback = null;
   }
 }

@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import '../services/api_service.dart';
 import '../services/heart_rate_service.dart';
+import '../vitals_rules.dart';
 
 class HealthMonitoringScreen extends StatefulWidget {
   final VoidCallback? onBackTap;
@@ -20,7 +21,6 @@ class _HealthMonitoringScreenState extends State<HealthMonitoringScreen> {
   String _bloodPressure = '0/0';
   bool _isReadingBP = false;
   bool _readingSent = false;
-  bool _abnormalAlertSent = false;
   bool _isStartingHeartRate = false;
   bool _didRestartHeartRateScan = false;
   bool _heartRateReadingSaved = false;
@@ -40,7 +40,6 @@ class _HealthMonitoringScreenState extends State<HealthMonitoringScreen> {
     _heartRateLoadingTimer?.cancel();
     _heartRateTimeoutTimer?.cancel();
     HeartRateService.onHeartRateUpdate = null;
-    HeartRateService.onAbnormalHeartRate = null;
     HeartRateService.stopMonitoring();
     super.dispose();
   }
@@ -104,10 +103,6 @@ class _HealthMonitoringScreenState extends State<HealthMonitoringScreen> {
       }
     };
     
-    HeartRateService.onAbnormalHeartRate = (int heartRate) {
-      _handleAbnormalHeartRate(heartRate);
-    };
-
     _heartRateLoadingTimer?.cancel();
     _heartRateLoadingTimer = Timer(const Duration(milliseconds: 1200), () {
       if (!mounted || _isHeartRateActive) return;
@@ -177,63 +172,14 @@ class _HealthMonitoringScreenState extends State<HealthMonitoringScreen> {
     }
   }
 
-  Future<void> _handleAbnormalHeartRate(int heartRate) async {
-    // Prevent duplicate alerts
-    if (_abnormalAlertSent) return;
-    
-    _abnormalAlertSent = true;
-    
-    // Send heart alert to backend
-    final username = ApiService.userName?.isNotEmpty == true 
-        ? ApiService.userName! 
-        : 'Watch User';
-    
-    final result = await ApiService.sendHeartAlert(
-      username: username,
-      heartRate: heartRate,
-    );
-    
-    if (mounted) {
-      if (result['success'] == true) {
-        print('✅ Heart alert sent: $heartRate bpm');
-        // Show alert sent indicator
-        setState(() {
-          _readingSent = true;
-        });
-        
-        // Reset after 5 seconds
-        Future.delayed(const Duration(seconds: 5), () {
-          if (mounted) {
-            setState(() {
-              _readingSent = false;
-              _abnormalAlertSent = false;
-            });
-          }
-        });
-      } else {
-        print('❌ Failed to send heart alert: ${result['error']}');
-        // Reset alert flag after delay to allow retry
-        Future.delayed(const Duration(seconds: 10), () {
-          if (mounted) {
-            setState(() {
-              _abnormalAlertSent = false;
-            });
-          }
-        });
-      }
-    }
-  }
-
   Future<void> _sendHeartRateReading(int heartRate) async {
-    final username = ApiService.userName?.isNotEmpty == true
-        ? ApiService.userName!
-        : 'Watch User';
-    final status = (heartRate < 50 || heartRate > 110) ? 'abnormal' : 'normal';
+    final a = VitalsAssessment.forHeartRate(heartRate);
 
     final result = await ApiService.sendHealthReading(
-      username: username,
       heartRate: heartRate,
-      status: status,
+      status: a.apiStatus,
+      vitalsUrgent: a.isCritical,
+      alertReason: a.alertReason,
     );
 
     if (!mounted) return;
@@ -270,28 +216,23 @@ class _HealthMonitoringScreenState extends State<HealthMonitoringScreen> {
           _bloodPressure = '$bp/$bpLow';
         });
         
-        // Send health reading to backend
-        _sendHealthReading(bp);
+        _sendHealthReading();
       }
     });
   }
 
-  Future<void> _sendHealthReading(int bp) async {
-    // Use saved name if available
-    final username = ApiService.userName?.isNotEmpty == true 
-        ? ApiService.userName! 
-        : 'Watch User';
-    
-    // Determine status based on BP (normal: <140/90, abnormal: >=140/90)
+  Future<void> _sendHealthReading() async {
     final bpParts = _bloodPressure.split('/');
     final systolic = int.tryParse(bpParts[0]) ?? 0;
     final diastolic = int.tryParse(bpParts.length > 1 ? bpParts[1] : '0') ?? 0;
-    final status = (systolic >= 140 || diastolic >= 90) ? 'abnormal' : 'normal';
-    
+    final a = VitalsAssessment.forBloodPressure(systolic, diastolic);
+
     final result = await ApiService.sendHealthReading(
-      username: username,
-      bp: bp,
-      status: status,
+      bp: systolic,
+      bpDiastolic: diastolic,
+      status: a.apiStatus,
+      vitalsUrgent: a.isCritical,
+      alertReason: a.alertReason,
     );
     
     if (mounted) {
@@ -316,7 +257,22 @@ class _HealthMonitoringScreenState extends State<HealthMonitoringScreen> {
   Widget build(BuildContext context) {
     final mediaQuery = MediaQuery.of(context);
     final screenSize = mediaQuery.size;
-    
+    final hr = _heartRate;
+    final bpParts = _bloodPressure.split('/');
+    final bpSys = int.tryParse(bpParts[0]) ?? 0;
+    final bpDia = int.tryParse(bpParts.length > 1 ? bpParts[1] : '0') ?? 0;
+    final bpAssess = VitalsAssessment.forBloodPressure(bpSys, bpDia);
+    Color bpCardColor = Colors.white70;
+    if (bpSys > 0 || bpDia > 0) {
+      if (bpAssess.isCritical) {
+        bpCardColor = Colors.red;
+      } else if (bpAssess.isWarning) {
+        bpCardColor = Colors.orange;
+      } else {
+        bpCardColor = Colors.green;
+      }
+    }
+
     return Container(
       width: screenSize.width,
       height: screenSize.height,
@@ -367,9 +323,9 @@ class _HealthMonitoringScreenState extends State<HealthMonitoringScreen> {
                     icon: Icons.favorite,
                     label: 'Heart Rate',
                     value: _isHeartRateActive
-                        ? '${_heartRate ?? 0} BPM'
+                        ? '${hr ?? 0} BPM'
                         : _heartRateStatusText,
-                    color: ((_heartRate ?? 0) > 0 && ((_heartRate ?? 0) < 50 || (_heartRate ?? 0) > 110))
+                    color: (hr != null && hr > 0 && (hr < 60 || hr > 100))
                         ? Colors.orange
                         : (_isHeartRateActive ? Colors.red : Colors.white70),
                     subtitle: _sensorStatus != null
@@ -394,7 +350,7 @@ class _HealthMonitoringScreenState extends State<HealthMonitoringScreen> {
                     icon: Icons.monitor_heart,
                     label: 'Blood Pressure',
                     value: _isReadingBP ? 'Reading...' : '$_bloodPressure mmHg',
-                    color: Colors.white70,
+                    color: bpCardColor,
                   ),
                   const SizedBox(height: 12),
                   _buildActionButton(

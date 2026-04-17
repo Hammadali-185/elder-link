@@ -6,6 +6,7 @@
 node_modules/
 
 # Build and cache
+**/.gradle_user_home/
 mobile/build/
 mobile/.dart_tool/
 mobile/.flutter-plugins-dependencies
