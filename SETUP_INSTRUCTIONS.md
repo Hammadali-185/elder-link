@@ -93,11 +93,11 @@ This guide will help you set up the ElderLink application with your own MongoDB 
    - **Mac/Linux**: Run `ifconfig` or `ip addr`, look for your local network IP
    - Example: `192.168.1.100` or `192.168.100.112`
 
-2. **Update API URL in Mobile App**
-   - Open `mobile/lib/services/api_service.dart`
-   - Find the line: `static const String baseUrl = 'http://192.168.100.112:5000/api';`
-   - Replace `192.168.100.112` with your computer's IP address
-   - Make sure the port matches your backend port (default: 5000)
+2. **Set the API host and port**
+   - **In the app:** use **Backend / API settings** (see `mobile/lib/screens/backend_settings_screen.dart`) to save host + port (default build defaults are often `192.168.137.1:5000` for hotspot setups).
+   - **Optional:** when running from the terminal, pass  
+     `--dart-define=MOBILE_API_HOST=<IP>` and `--dart-define=MOBILE_API_PORT=5000`.
+   - **Android emulator:** use `10.0.2.2` as the host to reach the host machine.
 
 3. **Install Dependencies**
    ```bash
@@ -115,11 +115,9 @@ This guide will help you set up the ElderLink application with your own MongoDB 
 
 ## Step 4: Configure Watch App
 
-1. **Update API URL in Watch App**
-   - Open `watch/lib/services/api_service.dart`
-   - Find the line: `static const String baseUrl = 'http://192.168.100.112:5000/api';`
-   - Replace `192.168.100.112` with your computer's IP address (same as mobile app)
-   - Make sure the port matches your backend port (default: 5000)
+1. **Set the API host and port**
+   - **In the app:** Watch **Settings** persist host/port (same idea as mobile).
+   - **Optional:**     `--dart-define=WATCH_API_HOST=<IP>` and `--dart-define=WATCH_API_PORT=5000` when running or building (see `watch/lib/services/api_service.dart`).
 
 2. **Install Dependencies**
    ```bash
@@ -139,8 +137,8 @@ This guide will help you set up the ElderLink application with your own MongoDB 
 
 ### Network Requirements
 - **All devices must be on the same Wi-Fi network** (mobile, watch, and backend server)
-- The IP address in the apps must match the computer running the backend
-- If your IP changes, update the `baseUrl` in both mobile and watch apps
+- The host in each app’s settings (or dart-define defaults) must reach the computer running the backend
+- If your IP changes, update saved host/port in **mobile** and **watch** settings (or rebuild with new defines)
 
 ### Port Configuration
 - Backend default port: `5000`
@@ -189,8 +187,8 @@ Common mistakes:
 - [ ] Connection string copied and configured in `backend/.env`
 - [ ] Backend server running and connected to MongoDB
 - [ ] Computer's IP address found
-- [ ] Mobile app `api_service.dart` updated with correct IP
-- [ ] Watch app `api_service.dart` updated with correct IP
+- [ ] Mobile app backend host/port set (settings or `MOBILE_API_*` defines)
+- [ ] Watch app backend host/port set (settings or `WATCH_API_*` defines)
 - [ ] All apps tested and working
 
 ---

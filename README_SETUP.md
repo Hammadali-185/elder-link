@@ -14,6 +14,7 @@ PORT=5000
 ```
 
 **How to get your MongoDB Atlas connection string:**
+
 1. Go to https://www.mongodb.com/cloud/atlas
 2. Create a free account
 3. Create a cluster (M0 Free tier)
@@ -24,31 +25,30 @@ PORT=5000
 
 ---
 
-### 2. Mobile App Configuration
+### 2. Mobile App — Backend URL (API host)
 
-**File:** `mobile/lib/services/api_service.dart`
+The mobile app **does not** use a single hard-coded `baseUrl` in source anymore. It uses:
 
-**Line 8:** Change the IP address to your computer's IP:
+- **Defaults:** host `192.168.137.1`, port `5000` (typical Windows mobile-hotspot gateway to the PC). Defined in `mobile/lib/services/api_service.dart` via `MOBILE_API_HOST` / `MOBILE_API_PORT` compile-time overrides.
+- **Runtime:** host and port are saved with **SharedPreferences** after you set them in the app (**Backend / connection settings** screen — `mobile/lib/screens/backend_settings_screen.dart`).
 
-```dart
-static const String baseUrl = 'http://YOUR_COMPUTER_IP:5000/api';
-```
+**Options:**
 
-**How to find your computer's IP:**
-- **Windows:** Open Command Prompt, type `ipconfig`, look for "IPv4 Address"
-- **Mac/Linux:** Open Terminal, type `ifconfig` or `ip addr`, look for your local network IP
-- Example: `192.168.1.100` or `192.168.100.112`
+1. **In the app (recommended on a physical device):** open staff settings → backend / API settings → enter your PC’s LAN IPv4 and port `5000` → save and test.
+2. **At build/run time:**  
+   `flutter run --dart-define=MOBILE_API_HOST=192.168.1.50 --dart-define=MOBILE_API_PORT=5000`
+3. **Android emulator:** PC loopback is usually `10.0.2.2` (not the LAN IP).
 
 ---
 
-### 3. Watch App Configuration
+### 3. Watch App — Backend URL (API host)
 
-**File:** `watch/lib/services/api_service.dart`
+Same pattern as mobile, with **`WATCH_API_HOST`** / **`WATCH_API_PORT`** in `watch/lib/services/api_service.dart`. Defaults match mobile (`192.168.137.1:5000`). Persisted keys: watch Settings screen.
 
-**Line 8:** Change the IP address to your computer's IP (same as mobile app):
+**Examples:**
 
-```dart
-static const String baseUrl = 'http://YOUR_COMPUTER_IP:5000/api';
+```bash
+flutter run --dart-define=WATCH_API_HOST=192.168.1.50 --dart-define=WATCH_API_PORT=5000
 ```
 
 ---
@@ -67,15 +67,14 @@ static const String baseUrl = 'http://YOUR_COMPUTER_IP:5000/api';
    ```bash
    cd mobile
    flutter pub get
-   # Update api_service.dart with your IP
    flutter run -d chrome
    ```
+   For web, use a fixed port so login persists: `.\run_web.ps1` or `flutter run -d chrome --web-port 55000`.
 
 3. **Watch App:**
    ```bash
    cd watch
    flutter pub get
-   # Update api_service.dart with your IP
    flutter run -d chrome
    ```
 
@@ -83,10 +82,10 @@ static const String baseUrl = 'http://YOUR_COMPUTER_IP:5000/api';
 
 ## Important Notes
 
-- ✅ All devices must be on the **same Wi-Fi network**
-- ✅ Backend must be running before starting mobile/watch apps
-- ✅ If your computer's IP changes, update both mobile and watch apps
-- ✅ MongoDB Atlas cluster must not be paused
+- All devices must be on the **same Wi-Fi network** (or hotspot from the PC running the API).
+- Backend must be listening on `0.0.0.0` (or your LAN interface) so phones/watches can reach it; open **firewall TCP port 5000** on the PC if needed.
+- If the PC’s IP changes, update **mobile** and **watch** saved host in Settings (or rebuild with new `--dart-define` values).
+- MongoDB Atlas cluster must not be paused.
 
 ---
 
@@ -98,16 +97,10 @@ static const String baseUrl = 'http://YOUR_COMPUTER_IP:5000/api';
    node test-connection.js
    ```
 
-2. Test backend API:
-   Open browser: `http://localhost:5000/api/readings`
-   Should return: `[]` (empty array)
+2. Test backend API: open `http://localhost:5000/api/readings` (should return JSON, often `[]`).
 
-3. If apps can't connect:
-   - Check backend is running
-   - Verify IP address is correct
-   - Ensure all devices are on same network
-   - Check firewall settings
+3. If apps can't connect: confirm backend is running, correct host/port in app settings, same network, and firewall.
 
 ---
 
-For detailed instructions, see `SETUP_INSTRUCTIONS.md`
+For more detail, see [SETUP_INSTRUCTIONS.md](SETUP_INSTRUCTIONS.md).

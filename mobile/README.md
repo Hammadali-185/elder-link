@@ -1,6 +1,6 @@
-# mobile
+# ElderLink — Mobile (staff) app
 
-A new Flutter project.
+Staff-facing Flutter app: Firebase Authentication, elders/medicines/alerts, admin areas, and configurable **backend host/port** (see `lib/screens/backend_settings_screen.dart` and `lib/services/api_service.dart`). For a full feature overview, see the [root README](../README.md).
 
 ## Getting Started
 

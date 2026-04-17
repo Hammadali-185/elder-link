@@ -1,113 +1,66 @@
-# ElderLink - Smartwatch UI Prototype
+# ElderLink — Watch app
 
-A Flutter-based smartwatch UI prototype designed for elderly users in a home care system. The interface is optimized for a 1.3-inch touchscreen with large, high-contrast buttons and simple navigation.
+Flutter UI aimed at small round / watch-class screens: large touch targets, high contrast, simple navigation. Talks to the same **Node/MongoDB** backend as `mobile/` when host/port are configured.
 
 ## Features
 
-### 🏠 Home Screen
-- Four large, high-contrast buttons:
-  - Medicine Reminder
-  - Panic Button
-  - Health Monitoring
-  - Audio (Quran)
-- Settings button at the bottom
+### Home (radial wheel)
 
-### 💊 Medicine Reminder Screen
-- Displays medicine name, dosage, and time
-- Three action buttons: TAKEN, SNOOZE, MISSED
-- Vibration feedback on button press
-- Automatic navigation back after selection
+- **Medicine** — today’s schedule from the API; taken / snooze / missed flows
+- **Switch** — pick the active resident (recent history + facility elders from `GET /api/elders`)
+- **Clock**
+- **My Info** — profile synced with the server (`sync-from-watch`)
+- **Music** — playback with optional session reporting
+- **Settings** — language, brightness, **backend host/port** (persisted)
+- **Health** — vitals-style monitoring and readings
+- **Panic** — center control; hold-to-confirm where applicable
 
-### 🚨 Panic Button Screen
-- Large red panic button in center
-- Requires 2-second hold to prevent accidental activation
-- Visual countdown during hold
-- Confirmation message after alert is sent
-- Vibration feedback
+### Medicine
 
-### ❤️ Health Monitoring Screen
-- Heart Rate monitoring
-- Blood Pressure monitoring
-- START READING button to begin measurement
-- Abnormal reading warnings
-- Visual feedback during reading process
+- Loads schedules for the **active** elder; scheduling uses **Karachi** wall date for “today” (`lib/karachi_time.dart`)
+- Dose-time alarms via local monitoring (`medicine_schedule_monitor.dart`)
+- **Cross-elder banner:** if another facility elder has **pending** doses today, a banner can prompt switching (`cross_elder_medicine_notifier.dart`)
 
-### 🎵 Audio Screen
-- Simple audio player interface
-- Play/Pause/Stop controls
-- Previous/Next track navigation
-- Current track name display
-- Optimized for Quran audio playback
+### Other
 
-### ⚙️ Settings Screen
-- Language toggle (English/Urdu)
-- Simple switch interface
-- App version information
+- Panic and health flows integrate with backend APIs where implemented
+- Urdu/English strings via app localizations
 
-## Design Principles
+## Backend connection
 
-- **High Contrast**: Dark background with white text for maximum visibility
-- **Large Fonts**: All text is sized for easy reading
-- **Minimal Clutter**: Clean, simple interface
-- **Clear Icons**: Visual indicators for all functions
-- **Consistent Navigation**: Back and Home buttons on all screens
+Defaults: `WATCH_API_HOST` / `WATCH_API_PORT` (see `lib/services/api_service.dart`), typically `192.168.137.1:5000`. Override at run/build with `--dart-define=...` or set host/port in **Settings** on the device.
 
-## Technical Specifications
+## Getting started
 
-- **Screen Size**: 1.3 inch
-- **Touchscreen**: Yes
-- **Physical Buttons**: One Home button (simulated in UI)
-- **Framework**: Flutter
-- **Minimum SDK**: Dart 3.0.0+
+```bash
+cd watch
+flutter pub get
+flutter run
+```
 
-## Dependencies
+Android emulator: often `--dart-define=WATCH_API_HOST=10.0.2.2`.
 
-- `flutter`: SDK
-- `cupertino_icons`: ^1.0.6
-- `vibration`: ^1.8.4 (for haptic feedback)
-- `audioplayers`: ^5.2.1 (for audio playback)
-
-## Getting Started
-
-1. Ensure Flutter is installed and configured
-2. Install dependencies:
-   ```bash
-   flutter pub get
-   ```
-3. Run the app:
-   ```bash
-   flutter run
-   ```
-
-## Project Structure
+## Project structure (partial)
 
 ```
 lib/
-├── main.dart                 # App entry point and navigation
+├── main.dart
+├── karachi_time.dart
 ├── screens/
 │   ├── home_screen.dart
+│   ├── switch_elder_screen.dart
 │   ├── medicine_reminder_screen.dart
-│   ├── panic_button_screen.dart
-│   ├── health_monitoring_screen.dart
-│   ├── audio_screen.dart
-│   └── settings_screen.dart
-├── widgets/
-│   └── common_widgets.dart  # Reusable UI components
-└── utils/
-    └── app_localizations.dart  # Language support
+│   └── ...
+├── services/
+│   ├── api_service.dart
+│   ├── medicine_schedule_monitor.dart
+│   ├── cross_elder_medicine_notifier.dart
+│   └── ...
+└── ui/
+    ├── cross_elder_medicine_banner_overlay.dart
+    └── ...
 ```
 
-## Notes
+## Dependencies
 
-- This is a UI prototype. Real functionality (API calls, actual sensor readings, audio file playback) would need to be integrated in a production version.
-- The app is optimized for portrait orientation on a small screen.
-- All screens include both Back and Home navigation buttons for easy access.
-
-## Future Enhancements
-
-- Integration with actual health sensors
-- Real-time medicine schedule from backend
-- Emergency alert system integration
-- Audio file management and playback
-- Additional accessibility features
-- Customizable font sizes
+See `pubspec.yaml` (e.g. `http`, `shared_preferences`, `audioplayers`, `vibration`, `timezone`, …).
